@@ -151,6 +151,9 @@ check the contents as well, and the question says that instead.
 There is no field for kmd-generate: the addon carries the copy `scons` built,
 and a different one is a matter of replacing that file.
 
+**Save** writes the clip as a standalone resource or into an `AnimationLibrary`,
+and **Open folder** reveals the last file it saved in the file manager.
+
 **Motion** lists every generation under `kimodo/output/root`, newest first,
 labelled with its prompt and frame count. Picking one is what Target and Save
 then work on, so an older take can be revisited without hunting for its folder.
