@@ -192,7 +192,6 @@ func _build_setup() -> void:
 
 	_reverify = CheckBox.new()
 	_reverify.text = "Re-hash existing"
-	_reverify.clip_text = true
 	_reverify.tooltip_text = "Check the files already on disk against the manifest instead of trusting their size. Slow over 15 GiB."
 	_setup.add_child(_reverify)
 
@@ -219,7 +218,6 @@ func _build_setup() -> void:
 	backend_row.add_child(backend_label)
 	_backend = OptionButton.new()
 	_backend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_backend.clip_text = true
 	_backend.tooltip_text = "Only CPU is forced. The other choice tries Vulkan 1.2 and falls back to the CPU when no device answers, so nothing here can require the GPU."
 	_backend.add_item("Vulkan if present")
 	_backend.add_item("CPU")
@@ -241,7 +239,6 @@ func _build_setup() -> void:
 
 	_sysmem = CheckBox.new()
 	_sysmem.text = "Spill to system RAM"
-	_sysmem.clip_text = true
 	_sysmem.tooltip_text = "Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access, so it buys completion rather than speed."
 	_sysmem.button_pressed = bool(Settings.editor_get("runtime/sysmem_fallback"))
 	_sysmem.toggled.connect(func(pressed): Settings.editor_set("runtime/sysmem_fallback", pressed))
@@ -263,12 +260,12 @@ func _section(parent: Control, title: String) -> void:
 	parent.add_child(label)
 
 
-## Buttons clip rather than widen: their text would otherwise set a minimum
-## width for the whole dock.
+## Deliberately no clip_text. Setting it drops the text from the button's
+## minimum size, so a button that does not expand shrinks to its padding and
+## loses its label entirely. Short labels are what keeps the dock narrow.
 func _button(parent: Control, text: String, action: Callable, tooltip: String = "") -> Button:
 	var button := Button.new()
 	button.text = text
-	button.clip_text = true
 	button.tooltip_text = tooltip
 	button.pressed.connect(action)
 	parent.add_child(button)
