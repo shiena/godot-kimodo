@@ -64,6 +64,7 @@ var _bone_map: BoneMap
 var _pid := -1
 var _pending_output := ""
 var _dialog: FileDialog
+var _confirm: ConfirmationDialog
 var _downloader: Node
 
 
@@ -434,6 +435,11 @@ func _refresh_presence() -> void:
 			Settings.motion_gguf_path(), Settings.text_bundle_path(),
 			"complete" if missing.is_empty() else "missing: " + ", ".join(missing)]
 
+	# The same answer on the folded pane, so "are the weights there?" does not
+	# need the pane opened to answer it.
+	_setup_toggle.tooltip_text = "The weight download and the runtime knobs.\n\nWeights: %s" % (
+			"all 36 files present" if missing.is_empty() else "%d of 36 missing" % missing.size())
+
 
 func _presence_line(label: String, present: bool) -> String:
 	var colour := "#7fd07f" if present else "#e0a050"
@@ -443,6 +449,30 @@ func _presence_line(label: String, present: bool) -> String:
 func _on_download() -> void:
 	if _downloader.is_busy():
 		return
+	# A resume needs no ceremony. Asking is for the case where there is nothing
+	# obvious to gain, so the question has to say what pressing it actually costs.
+	if _weights_present():
+		_ask_before_redownload()
+		return
+	_start_download()
+
+
+func _ask_before_redownload() -> void:
+	if is_instance_valid(_confirm):
+		_confirm.queue_free()
+	_confirm = ConfirmationDialog.new()
+	_confirm.title = "The weights are already here"
+	_confirm.ok_button_text = "Download"
+	_confirm.dialog_text = ("All 36 files are in place.\n\n" + (
+			"Re-hash existing is on, so this reads about 15.2 GiB off disk to check every file against the manifest, and re-fetches only what fails."
+			if _reverify.button_pressed else
+			"This compares their sizes against the manifest and re-fetches only what does not match, so it normally transfers nothing but the two manifests. Tick Re-hash existing first to check the contents too."))
+	_confirm.confirmed.connect(_start_download)
+	add_child(_confirm)
+	_confirm.popup_centered()
+
+
+func _start_download() -> void:
 	var destination := _models_dir.text.strip_edges()
 	if destination.is_empty():
 		_set_message(_download_status, "Set a model directory first.")

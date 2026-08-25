@@ -137,9 +137,16 @@ onto the selected `Skeleton3D`, and saves the result.
 A folded **Setup** pane holds the weight download and the runtime knobs, and
 opens itself whenever a file it configures is missing. "Missing" means any of
 the 36 files `llm_text_encoder::load()` asks for, so a download that stopped
-halfway opens the pane rather than passing for complete. Download keeps whatever
-is already in place, which makes it resume an interrupted fetch and repair a
-damaged one.
+halfway opens the pane rather than passing for complete. The state is on the
+presence line inside the pane and on the pane's own tooltip, so the question
+survives the pane being folded.
+
+Download keeps whatever is already in place, which makes it resume an
+interrupted fetch and repair a damaged one. Pressing it when all 36 files are
+there asks first, and says what it would actually do: compare sizes against the
+manifest and re-fetch only a mismatch, which normally transfers nothing but the
+two manifests. With **Re-hash existing** ticked it reads 15.2 GiB off disk to
+check the contents as well, and the question says that instead.
 
 There is no field for kmd-generate: the addon carries the copy `scons` built,
 and a different one is a matter of replacing that file.
