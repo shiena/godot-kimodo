@@ -881,6 +881,7 @@ func _build_preview() -> void:
 
 	_preview_camera = Camera3D.new()
 	_preview_camera.current = true
+	_preview_camera.near = 0.02
 	_preview_camera.environment = environment
 	_preview.add_child(_preview_camera)
 
@@ -975,10 +976,7 @@ func _advance_preview(delta: float) -> void:
 
 
 func _aim_preview() -> void:
-	var pivot := Vector3(0.0, 0.95, 0.0)
-	if _motion != null and _motion.get_frame_count() > 0:
-		var frame := clampi(roundi(_preview_time * _motion.get_fps()), 0, _motion.get_frame_count() - 1)
-		pivot = _motion.get_root_position(frame) * Vector3(1.0, 0.0, 1.0) + Vector3(0.0, 0.95, 0.0)
+	var pivot := _preview_pivot()
 	var direction := Vector3(
 			cos(_preview_pitch) * sin(_preview_yaw),
 			sin(_preview_pitch),
@@ -998,6 +996,33 @@ func _on_preview_resized(event: InputEvent) -> void:
 	Settings.editor_set("preview/height", int(height))
 
 
+## Orbit and zoom turn around the middle of the model itself. A guessed height
+## aims at nothing in particular, and with no motion loaded the rest skeleton
+## keeps its pelvis at the origin with its feet below, so a fixed pivot pointed
+## at empty air above the mannequin.
+func _preview_pivot() -> Vector3:
+	if _preview_skeleton == null or _preview_skeleton.get_bone_count() == 0:
+		return Vector3.ZERO
+	var low := Vector3.INF
+	var high := -Vector3.INF
+	for bone in _preview_skeleton.get_bone_count():
+		var origin := _preview_bone_origin(bone)
+		low = low.min(origin)
+		high = high.max(origin)
+	return (low + high) * 0.5
+
+
+## Composed by hand: get_bone_global_pose() still reports the rest when it is
+## read in the same frame as the seek that posed the skeleton.
+func _preview_bone_origin(bone: int) -> Vector3:
+	var transform := _preview_skeleton.get_bone_pose(bone)
+	var parent := _preview_skeleton.get_bone_parent(bone)
+	while parent >= 0:
+		transform = _preview_skeleton.get_bone_pose(parent) * transform
+		parent = _preview_skeleton.get_bone_parent(parent)
+	return transform.origin
+
+
 func _on_preview_play() -> void:
 	_preview_running = not _preview_running
 	_preview_play.text = "Pause" if _preview_running else "Play"
@@ -1015,11 +1040,13 @@ func _on_preview_input(event: InputEvent) -> void:
 		_preview_pitch = clampf(_preview_pitch - event.relative.y * 0.008, -1.4, 1.4)
 		_aim_preview()
 	elif event is InputEventMouseButton and event.pressed:
+		# Zooming by a ratio rather than a step: a fixed step is coarse up close
+		# and glacial far out. The near end is a hand's width from a joint.
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_preview_distance = maxf(0.8, _preview_distance - 0.25)
+			_preview_distance = clampf(_preview_distance * 0.85, 0.12, 30.0)
 			_aim_preview()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_preview_distance = minf(12.0, _preview_distance + 0.25)
+			_preview_distance = clampf(_preview_distance * 1.18, 0.12, 30.0)
 			_aim_preview()
 
 
