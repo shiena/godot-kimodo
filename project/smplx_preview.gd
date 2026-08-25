@@ -245,8 +245,10 @@ func _process(_delta: float) -> void:
 	_readout.text = _describe_frame(frame)
 
 
+## assigned_animation, not current_animation: the latter reports an empty name
+## whenever the player is not playing, so a paused clip would read as frame 0.
 func _current_frame() -> int:
-	if _player.current_animation.is_empty():
+	if _player.assigned_animation.is_empty():
 		return 0
 	return clampi(roundi(_player.current_animation_position * _motion.get_fps()), 0,
 			_motion.get_frame_count() - 1)
@@ -349,14 +351,14 @@ func _update_camera() -> void:
 
 
 func _toggle_play() -> void:
-	if _player.current_animation.is_empty():
+	if _player.assigned_animation.is_empty():
 		_player.play(&"motion")
 	else:
 		_player.pause() if _player.is_playing() else _player.play()
 
 
 func _step(frames: int) -> void:
-	if _motion == null or _player.current_animation.is_empty():
+	if _motion == null or _player.assigned_animation.is_empty():
 		return
 	_player.pause()
 	var frame := clampi(_current_frame() + frames, 0, _motion.get_frame_count() - 1)

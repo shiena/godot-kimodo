@@ -963,11 +963,15 @@ func _reload_preview() -> void:
 	_preview_player.pause()
 
 
-## The clock is turned by hand. An AnimationPlayer left to itself does not
-## advance reliably inside the editor, and seeking keeps the slider and the pose
-## describing the same frame.
+## The clock is turned by hand: seeking keeps the slider and the pose describing
+## the same frame, and it works on a paused player.
+##
+## The readiness test is assigned_animation rather than current_animation.
+## current_animation reports an empty name whenever the player is not playing,
+## which is exactly the state this preview sits in, so guarding on it meant
+## never advancing at all.
 func _advance_preview(delta: float) -> void:
-	if _motion == null or _preview_player == null or _preview_player.current_animation.is_empty():
+	if _motion == null or _preview_player == null or _preview_player.assigned_animation.is_empty():
 		return
 	var length := _motion.get_duration()
 	if _preview_running and length > 0.0:
