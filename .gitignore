@@ -8,9 +8,11 @@
 !/project/bin/*.gdextension
 !/project/bin/*.gdextension.uid
 
-# Ignore the fixture that scripts/make_sample_motion.py regenerates
+# Ignore generated motion: the sample fixture, a real clip kept for checking
+# against, and whatever kimodo/output/root points at inside the project
 /project/motion_sample/
 /project/motion_real/
+/project/kimodo_out/
 
 # Ignore kmd-generate and the shared libraries scons bundles with the addon
 /project/addons/kimodo/bin/
