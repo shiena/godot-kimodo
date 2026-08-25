@@ -43,6 +43,7 @@ var _motion_label: Label
 var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
 var _clip_name: LineEdit
+var _last_saved := ""
 
 var _models_dir: LineEdit
 var _token: LineEdit
@@ -186,6 +187,8 @@ func _build_save() -> void:
 	_button(_body, "Save clip...", _on_save_clip, "Write the Animation as a standalone resource.")
 	_button(_body, "Add to library...", _on_save_library,
 			"Add or replace this name in an AnimationLibrary, creating it if needed.")
+	_button(_body, "Open folder", _on_open_folder,
+			"Show the last file saved here in the file manager, or the folder it would go to.")
 
 
 func _build_weights() -> void:
@@ -802,6 +805,7 @@ func _on_save_clip() -> void:
 func _write_clip(path: String, animation: Animation) -> void:
 	var error := KimodoLibrary.save_animation(animation, path)
 	if error == OK:
+		_last_saved = path
 		_set_message(_status, "Saved %s." % path)
 	else:
 		_set_message(_status, "Saving %s failed (%d)." % [path, error])
@@ -818,10 +822,29 @@ func _on_save_library() -> void:
 func _write_library(path: String, animation: Animation) -> void:
 	var error := KimodoLibrary.save_to_library(animation, path, StringName(_clip_name.text))
 	if error == OK:
+		_last_saved = path
 		_set_message(_status, "Added %s to %s." % [_clip_name.text, path])
 	else:
 		_set_message(_status, "Saving %s failed (%d)." % [path, error])
 	EditorInterface.get_resource_filesystem().scan()
+
+
+## Reveals the last file saved from here, so the answer to "where did that go?"
+## is one press rather than a path read off a status line. Before anything has
+## been saved it falls back to where the library would land.
+func _on_open_folder() -> void:
+	var target := _last_saved
+	if target.is_empty() or not FileAccess.file_exists(target):
+		target = String(Settings.project_get("output/library")).get_base_dir()
+	if target.is_empty():
+		target = "res://"
+
+	var absolute := ProjectSettings.globalize_path(target)
+	if not (FileAccess.file_exists(target) or DirAccess.dir_exists_absolute(target)):
+		_set_message(_status, "%s is not there yet." % target)
+		return
+	if OS.shell_show_in_file_manager(absolute, true) != OK:
+		_set_message(_status, "Could not open %s." % absolute)
 
 
 func _save_dialog(default_path: String, on_selected: Callable) -> void:
