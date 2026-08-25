@@ -1,0 +1,16 @@
+diff --git a/src/llm_text_encoder.cpp b/src/llm_text_encoder.cpp
+index b67c059..46ae45b 100644
+--- a/src/llm_text_encoder.cpp
++++ b/src/llm_text_encoder.cpp
+@@ -60,7 +60,10 @@ struct component {
+ std::unique_ptr<component> open_component(const std::filesystem::path &path, ggml_backend_t backend) {
+     auto result = std::make_unique<component>();
+     gguf_init_params params{true, &result->ctx};
+-    result->file = gguf_init_from_file(path.c_str(), params);
++    // path::value_type is wchar_t on Windows, so c_str() does not give the
++    // narrow string gguf_init_from_file takes.
++    const std::string file_path = path.string();
++    result->file = gguf_init_from_file(file_path.c_str(), params);
+     if (!result->file || !result->ctx)
+         throw std::runtime_error("cannot load text component " + path.string());
+     result->weights = ggml_backend_alloc_ctx_tensors(result->ctx, backend);

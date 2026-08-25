@@ -1,0 +1,24 @@
+diff --git a/src/denoiser.cpp b/src/denoiser.cpp
+index 14548d7..bab4713 100644
+--- a/src/denoiser.cpp
++++ b/src/denoiser.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include <cmath>
+ #include <cstring>
++#include <stdexcept>
+ #include <ggml.h>
+ #include <ggml-alloc.h>
+ #include <ggml-backend.h>
+diff --git a/src/llm_tokenizer.cpp b/src/llm_tokenizer.cpp
+index e502229..978637e 100644
+--- a/src/llm_tokenizer.cpp
++++ b/src/llm_tokenizer.cpp
+@@ -11,6 +11,7 @@
+ #include <cctype>
+ #include <cstdint>
+ #include <limits>
++#include <stdexcept>
+ #include <unordered_map>
+ 
+ namespace kimodo::detail {

@@ -101,12 +101,28 @@ well. It needs, on top of the above:
 
 Any of those missing is a skip with a warning rather than a failure, because the
 addon still reads, retargets and saves a motion that kmd-generate wrote earlier.
-Pass `kimodo_native=no` to skip it deliberately. On Windows, SCons hands CMake
-the MSVC environment it already located, so no developer command prompt is
-needed.
+Pass `kimodo_native=no` to skip it deliberately.
 
-kimodo.cpp's own README documents a Linux build only, so a Windows build of it
-is not something upstream has verified.
+On Windows, SCons hands CMake the MSVC environment it has already located, so no
+developer command prompt is needed, and it finds the cmake that ships as a
+Visual Studio component rather than insisting on one on PATH. The result is
+about 55 MB, most of it the Vulkan shaders compiled into `ggml-vulkan.dll`.
+
+### Patches
+
+kimodo.cpp's README documents a Linux build, and the pinned revision does not
+compile with MSVC. The fixes live in `patches/` and SCons applies them to the
+submodule working tree before configuring, so they stay visible instead of
+turning into edits nobody can see. Each is skipped when already applied.
+
+| Patch | What it fixes |
+|---|---|
+| `0001-narrow-path-for-gguf_init_from_file.patch` | `std::filesystem::path::value_type` is `wchar_t` on Windows, so `path.c_str()` is not the narrow string `gguf_init_from_file` takes |
+| `0002-include-stdexcept.patch` | `std::runtime_error` used without `<stdexcept>`. libstdc++ pulls it in transitively; the MSVC STL does not |
+
+Both belong upstream. `.gitmodules` marks kimodo.cpp `ignore = dirty` so the
+patched working tree does not show up as a change on every `git status`; the
+pinned revision is still what the submodule points at.
 
 Only x86_64 Linux and Windows are listed in the `.gdextension`, because those are
 the platforms kimodo.cpp itself supports: it needs a C++23 compiler and the GGML

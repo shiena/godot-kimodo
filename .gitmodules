@@ -5,3 +5,4 @@
 [submodule "kimodo.cpp"]
 	path = kimodo.cpp
 	url = https://github.com/localai-org/kimodo.cpp.git
+	ignore = dirty

@@ -56,6 +56,40 @@ def print_error(*values: object) -> None:
 
 KIMODO_SOURCE_DIR = "kimodo.cpp"
 KIMODO_BUILD_DIR = os.path.join(KIMODO_SOURCE_DIR, "build", "godot")
+KIMODO_PATCH_DIR = "patches"
+
+
+def _visual_studio_roots() -> list:
+    """Installation paths of every Visual Studio on this machine."""
+    vswhere = os.path.join(
+        os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    if not os.path.isfile(vswhere):
+        return []
+    try:
+        output = subprocess.check_output(
+            [vswhere, "-products", "*", "-property", "installationPath"],
+            stderr=subprocess.DEVNULL, universal_newlines=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def find_cmake():
+    """cmake, wherever it is, or None.
+
+    Visual Studio ships one as an optional component and leaves it off PATH, so
+    a machine that can build this happily looks like one that cannot.
+    """
+    on_path = shutil.which("cmake")
+    if on_path is not None:
+        return on_path
+    for root in _visual_studio_roots():
+        candidate = os.path.join(
+            root, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def kimodo_native_blockers() -> list:
@@ -70,7 +104,7 @@ def kimodo_native_blockers() -> list:
         missing.append("the kimodo.cpp submodule (git submodule update --init kimodo.cpp)")
     elif not os.path.isfile(os.path.join(KIMODO_SOURCE_DIR, "ggml", "CMakeLists.txt")):
         missing.append("kimodo.cpp's ggml submodule (git submodule update --init --recursive kimodo.cpp)")
-    if shutil.which("cmake") is None:
+    if find_cmake() is None:
         missing.append("cmake 3.25 or newer")
     if shutil.which("glslc") is None and not os.environ.get("VULKAN_SDK"):
         missing.append("the Vulkan SDK, which supplies glslc for the GGML Vulkan shaders")
@@ -96,6 +130,34 @@ def _cmake_environment(env) -> dict:
     return process_env
 
 
+def apply_kimodo_patches() -> bool:
+    """Put the patches in patches/ on the kimodo.cpp working tree.
+
+    kimodo.cpp is pinned at a revision that does not compile on Windows, and it
+    is somebody else's repository, so the fixes live here as patches rather
+    than as edits nobody can see. Each one is skipped when it is already
+    applied, so this is safe to run on every build.
+    """
+    if not os.path.isdir(KIMODO_PATCH_DIR):
+        return True
+    patches = sorted(
+        os.path.join(KIMODO_PATCH_DIR, name)
+        for name in os.listdir(KIMODO_PATCH_DIR)
+        if name.endswith(".patch"))
+    for patch in patches:
+        absolute = os.path.abspath(patch)
+        reverse = ["git", "apply", "--check", "--reverse", absolute]
+        if subprocess.call(reverse, cwd=KIMODO_SOURCE_DIR,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+            continue
+        print("Applying {} to {} ...".format(patch, KIMODO_SOURCE_DIR))
+        if subprocess.call(["git", "apply", absolute], cwd=KIMODO_SOURCE_DIR) != 0:
+            print_error(
+                "{} does not apply. kimodo.cpp has moved on and the patch needs redoing.".format(patch))
+            return False
+    return True
+
+
 def build_kimodo_native(target, source, env):
     """Configure and build kmd-generate straight into the addon.
 
@@ -105,10 +167,13 @@ def build_kimodo_native(target, source, env):
     destination = os.path.abspath(os.path.dirname(str(target[0])))
     os.makedirs(destination, exist_ok=True)
     process_env = _cmake_environment(env)
+    cmake = find_cmake()
+    if not apply_kimodo_patches():
+        return 1
 
     if not os.path.isfile(os.path.join(KIMODO_BUILD_DIR, "CMakeCache.txt")):
         configure = [
-            "cmake",
+            cmake,
             "-S", KIMODO_SOURCE_DIR,
             "-B", KIMODO_BUILD_DIR,
             "-G", "Ninja",
@@ -127,7 +192,7 @@ def build_kimodo_native(target, source, env):
 
     # Only this target: the fixture and parity executables link ggml-vulkan
     # unconditionally, and none of them is needed to generate a motion.
-    build = ["cmake", "--build", KIMODO_BUILD_DIR, "--target", "kmd-generate"]
+    build = [cmake, "--build", KIMODO_BUILD_DIR, "--target", "kmd-generate"]
     print("Building kmd-generate ...")
     if subprocess.call(build, env=process_env) != 0:
         print_error("kmd-generate failed to build. Pass kimodo_native=no to build the addon without it.")
