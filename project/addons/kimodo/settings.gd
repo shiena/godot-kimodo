@@ -97,6 +97,22 @@ static func register() -> void:
 		ProjectSettings.add_property_info(info)
 
 
+## kmd-generate as scons bundles it. A path in the editor settings overrides
+## this, for a build made somewhere else.
+static func bundled_generator_path() -> String:
+	var platform := OS.get_name().to_lower()
+	return "res://addons/kimodo/bin/%s/kmd-generate%s" % [platform, ".exe" if platform == "windows" else ""]
+
+
+## The generator to run, or an empty string when there is none to run.
+static func generator_path() -> String:
+	var override := String(editor_get("paths/generator")).strip_edges()
+	if not override.is_empty():
+		return override
+	var bundled := bundled_generator_path()
+	return bundled if FileAccess.file_exists(bundled) else ""
+
+
 ## Absolute path of the motion GGUF under the configured model directory.
 static func motion_gguf_path() -> String:
 	return String(editor_get("paths/models_dir")).path_join(MOTION_RELATIVE)

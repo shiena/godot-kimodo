@@ -156,14 +156,15 @@ func _build_ui() -> void:
 	_refresh_presence()
 	# Nothing here works until the generator and the weights are in place, so the
 	# setup pane opens itself until they are.
-	_setup_toggle.button_pressed = _generator_path.text.is_empty() or not _weights_present()
+	_setup_toggle.button_pressed = Settings.generator_path().is_empty() or not _weights_present()
 	_setup.visible = _setup_toggle.button_pressed
 
 
 func _build_setup() -> void:
 	_section(_setup, "Paths")
 	_generator_path = _editor_path_row("kmd-generate", "paths/generator", true,
-			"The kmd-generate binary built from kimodo.cpp.")
+			"Leave empty to use the copy scons builds into the addon. Fill it in only to point at a build made somewhere else.")
+	_generator_path.placeholder_text = "bundled with the addon"
 	_models_dir = _editor_path_row("Models", "paths/models_dir", false,
 			"Root of the downloaded bundle. The motion GGUF and the text bundle sit under it in the layout the upstream download script writes.")
 
@@ -179,7 +180,7 @@ func _build_setup() -> void:
 	_presence = RichTextLabel.new()
 	_presence.bbcode_enabled = true
 	_presence.fit_content = true
-	_presence.custom_minimum_size = Vector2(0.0, 36.0)
+	_presence.custom_minimum_size = Vector2(0.0, 54.0)
 	_setup.add_child(_presence)
 
 	_token = LineEdit.new()
@@ -437,8 +438,8 @@ func _set_message(label: Label, text: String) -> void:
 func _on_generate() -> void:
 	if _pid >= 0:
 		return
-	if _generator_path.text.strip_edges().is_empty():
-		_set_message(_status, "Set the kmd-generate path under Setup.")
+	if Settings.generator_path().is_empty():
+		_set_message(_status, "No kmd-generate. Build it with scons, or point Setup at one.")
 		return
 	if not _weights_present():
 		_set_message(_status, "The weights are not in place. Download them under Setup.")
@@ -461,7 +462,7 @@ func _on_generate() -> void:
 
 	_pid = _spawn_generator(prompt_path, out_dir)
 	if _pid < 0:
-		_set_message(_status, "Could not start %s." % _generator_path.text)
+		_set_message(_status, "Could not start %s." % Settings.generator_path())
 		return
 	_pending_output = out_dir
 	_generate_button.disabled = true
@@ -490,7 +491,7 @@ func _spawn_generator(prompt_path: String, out_dir: String) -> int:
 		str(int(_seed.value)),
 		ProjectSettings.globalize_path(out_dir),
 	]
-	return OS.create_process(ProjectSettings.globalize_path(_generator_path.text), arguments, false)
+	return OS.create_process(ProjectSettings.globalize_path(Settings.generator_path()), arguments, false)
 
 
 func _process(_delta: float) -> void:

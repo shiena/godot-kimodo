@@ -77,13 +77,36 @@ Needs SCons, Python 3 and a C++17 toolchain. On Windows that means MSVC; on
 Linux, GCC or Clang.
 
 ```sh
-git submodule update --init godot-cpp
+git submodule update --init --recursive
 scons
 ```
 
 The build writes `project/bin/windows/` or `project/bin/linux/`, which is where
 `project/bin/kimodo.gdextension` looks. The editor dock is GDScript under
 `project/addons/kimodo/`, so it needs no build of its own.
+
+### kmd-generate
+
+`scons` also builds `kmd-generate` from kimodo.cpp and puts it, with the shared
+libraries it loads, in `project/addons/kimodo/bin/<platform>/`. The dock looks
+there first, so nothing has to be configured to generate a motion.
+
+SCons drives CMake for this rather than compiling it itself: reproducing that
+build would mean reproducing GGML and the compilation of its Vulkan shaders as
+well. It needs, on top of the above:
+
+- cmake 3.25 or newer
+- the Vulkan SDK, for the `glslc` that compiles the GGML Vulkan shaders
+- the `ggml` submodule inside kimodo.cpp, which `--recursive` above brings in
+
+Any of those missing is a skip with a warning rather than a failure, because the
+addon still reads, retargets and saves a motion that kmd-generate wrote earlier.
+Pass `kimodo_native=no` to skip it deliberately. On Windows, SCons hands CMake
+the MSVC environment it already located, so no developer command prompt is
+needed.
+
+kimodo.cpp's own README documents a Linux build only, so a Windows build of it
+is not something upstream has verified.
 
 Only x86_64 Linux and Windows are listed in the `.gdextension`, because those are
 the platforms kimodo.cpp itself supports: it needs a C++23 compiler and the GGML
@@ -92,9 +115,12 @@ Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
 ## The dock
 
 Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
-right. Its Setup pane downloads the weights and points at `kmd-generate`; the
-rest of the panel generates a clip, or loads an OUT_DIR that already exists,
-bakes it onto the selected `Skeleton3D`, and saves the result.
+right. Its Setup pane downloads the weights; the rest of the panel generates a
+clip, or loads an OUT_DIR that already exists, bakes it onto the selected
+`Skeleton3D`, and saves the result.
+
+The kmd-generate field in Setup is an override. Left empty it uses the copy
+`scons` bundled with the addon, which is the usual case.
 
 ### Weights
 

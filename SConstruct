@@ -2,10 +2,11 @@
 import os
 import sys
 
-from methods import print_error
+from methods import build_kimodo_native, kimodo_native_blockers, print_error, print_warning
 
 
 libname = "kimodo"
+addonname = "kimodo"
 projectdir = "project"
 
 localEnv = Environment(tools=["default"], PLATFORM="")
@@ -61,4 +62,26 @@ library = env.SharedLibrary(
 copy = env.Install("{}/bin/{}/".format(projectdir, env["platform"]), library)
 
 default_args = [library, copy]
+
+# kmd-generate comes from kimodo.cpp's CMake build. It is put inside the addon
+# so the dock finds it without anyone typing a path, and it is skipped rather
+# than fatal when the toolchain for it is not installed: the addon is useful
+# without it for anything that reads a motion kmd-generate already wrote.
+Help("kimodo_native=yes|no: build kmd-generate from kimodo.cpp and bundle it (default yes)")
+if ARGUMENTS.get("kimodo_native", "yes") not in ("no", "false", "0"):
+    blockers = kimodo_native_blockers()
+    if blockers:
+        print_warning("Not building kmd-generate. Missing: " + "; ".join(blockers))
+    else:
+        native = env.Command(
+            "{}/addons/{}/bin/{}/kmd-generate{}".format(
+                projectdir, addonname, env["platform"], env["PROGSUFFIX"]),
+            [],
+            build_kimodo_native,
+        )
+        # CMake keeps its own dependency graph, and it is the one that knows
+        # about GGML's sources and shaders.
+        env.AlwaysBuild(native)
+        default_args.append(native)
+
 Default(*default_args)

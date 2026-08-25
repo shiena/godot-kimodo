@@ -11,6 +11,9 @@
 # Ignore the fixture that scripts/make_sample_motion.py regenerates
 /project/motion_sample/
 
+# Ignore kmd-generate and the shared libraries scons bundles with the addon
+/project/addons/kimodo/bin/
+
 # Ignore scons database
 .sconsign*.dblite
 
