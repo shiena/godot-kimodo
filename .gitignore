@@ -2,6 +2,9 @@
 *.gen.*
 .godot/
 
+# GodotHub records which engine it launched this project with
+.godotrc
+
 # Ignore library files but not the gdextension file
 /bin/**
 /project/bin/**
