@@ -1,6 +1,8 @@
 #include "register_types.h"
 
+#include "kimodo_library.h"
 #include "kimodo_motion.h"
+#include "kimodo_retarget.h"
 #include "kimodo_smplx.h"
 
 #include <gdextension_interface.h>
@@ -16,6 +18,8 @@ void initialize_kimodo_types(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(KimodoMotion);
 	GDREGISTER_ABSTRACT_CLASS(KimodoSmplx);
+	GDREGISTER_ABSTRACT_CLASS(KimodoRetarget);
+	GDREGISTER_ABSTRACT_CLASS(KimodoLibrary);
 }
 
 void uninitialize_kimodo_types(ModuleInitializationLevel p_level) {
