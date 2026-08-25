@@ -134,16 +134,20 @@ Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
 right. It generates a clip, or loads an OUT_DIR that already exists, bakes it
 onto the selected `Skeleton3D`, and saves the result.
 
-The panel runs from what gets used every day down to what gets used once:
-Generate, Motion, Target, Save, then Weights, then a folded Runtime pane. There
-is no field for kmd-generate: the addon carries the copy `scons` built, and a
-different one is a matter of replacing that file.
+A folded **Setup** pane holds the weight download and the runtime knobs, and
+opens itself whenever a file it configures is missing. "Missing" means any of
+the 36 files `llm_text_encoder::load()` asks for, so a download that stopped
+halfway opens the pane rather than passing for complete. Download keeps whatever
+is already in place, which makes it resume an interrupted fetch and repair a
+damaged one.
 
-Weights stays visible even when the bundle is complete, because a bundle can be
-re-fetched, moved, or pinned to another revision. Download keeps whatever is
-already in place, so it resumes an interrupted fetch and repairs a damaged one.
-"Present" means every one of the 36 files `llm_text_encoder::load()` asks for,
-not merely that a directory turned up.
+There is no field for kmd-generate: the addon carries the copy `scons` built,
+and a different one is a matter of replacing that file.
+
+**Motion** lists every generation under `kimodo/output/root`, newest first,
+labelled with its prompt and frame count. Picking one is what Target and Save
+then work on, so an older take can be revisited without hunting for its folder.
+`Load folder...` still reads an OUT_DIR from anywhere else.
 
 ### Weights
 

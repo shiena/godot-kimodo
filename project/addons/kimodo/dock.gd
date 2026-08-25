@@ -13,10 +13,10 @@ extends ScrollContainer
 ## kmd-generate owns the GPU for the length of a run, so only one is allowed at
 ## a time.
 ##
-## The order runs from what gets used every day to what gets used once. Weights
-## stay visible rather than folding away when they are complete, because a
-## bundle can be re-fetched, moved or pinned to another revision. Only the
-## runtime knobs fold.
+## Setup folds away, because after the first run nobody touches the weights or
+## the runtime knobs. It carries an arrow so it reads as a pane rather than a
+## button that lost its panel, and it opens itself whenever a file it configures
+## is missing, which now includes a download that stopped halfway.
 ##
 ## A dock is narrow, so anything longer than a few words goes in a tooltip. A
 ## wrapped sentence turns into ten lines of height here, and a button that does
@@ -27,6 +27,9 @@ const Downloader := preload("res://addons/kimodo/downloader.gd")
 
 var _body: VBoxContainer
 
+var _setup_toggle: Button
+var _setup: VBoxContainer
+
 var _prompt: TextEdit
 var _frames: SpinBox
 var _steps: SpinBox
@@ -34,6 +37,8 @@ var _seed: SpinBox
 var _generate_button: Button
 var _status: Label
 
+var _clips: OptionButton
+var _clip_dirs := PackedStringArray()
 var _motion_label: Label
 var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
@@ -48,8 +53,6 @@ var _download_bar: ProgressBar
 var _download_status: Label
 var _presence: RichTextLabel
 
-var _runtime_toggle: Button
-var _runtime: VBoxContainer
 var _backend: OptionButton
 var _threads: SpinBox
 var _chunk: SpinBox
@@ -86,15 +89,27 @@ func _ready() -> void:
 	_body.add_theme_constant_override(&"separation", 6)
 	add_child(_body)
 
+	_setup_toggle = Button.new()
+	_setup_toggle.toggle_mode = true
+	_setup_toggle.tooltip_text = "The weight download and the runtime knobs."
+	_setup_toggle.toggled.connect(_on_setup_toggled)
+	_body.add_child(_setup_toggle)
+
+	_setup = VBoxContainer.new()
+	_setup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_setup)
+	_build_weights()
+	_build_runtime()
+
 	_build_generate()
 	_build_motion()
 	_build_target()
 	_build_save()
-	_build_weights()
-	_build_runtime()
 
 	_on_bone_map_changed(_bone_map_path.text)
 	_refresh_presence()
+	_refresh_clips()
+	_on_setup_toggled(not _weights_present())
 
 
 func _build_generate() -> void:
@@ -117,8 +132,21 @@ func _build_generate() -> void:
 
 func _build_motion() -> void:
 	_section(_body, "Motion")
+
+	var row := HBoxContainer.new()
+	_body.add_child(row)
+	_clips = OptionButton.new()
+	_clips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clips.tooltip_text = "Everything generated under kimodo/output/root, newest first."
+	_clips.item_selected.connect(_on_clip_selected)
+	row.add_child(_clips)
+	var refresh := _browse(_refresh_clips)
+	refresh.text = "↻"
+	refresh.tooltip_text = "Look again for generated clips."
+	row.add_child(refresh)
+
 	_button(_body, "Load folder...", _on_load_folder,
-			"Read an OUT_DIR that kmd-generate has already written.")
+			"Read an OUT_DIR from somewhere other than the output root.")
 	_motion_label = _message(_body, 2)
 	_motion_label.text = "No motion loaded."
 
@@ -160,8 +188,8 @@ func _build_save() -> void:
 
 
 func _build_weights() -> void:
-	_section(_body, "Weights")
-	_models_dir = _path_row(_body, "Model directory", "paths/models_dir",
+	_section(_setup, "Weights")
+	_models_dir = _path_row(_setup, "Model directory", "paths/models_dir",
 			"Root of the bundle. The motion GGUF and the text bundle sit under it in the layout the upstream download script writes.")
 
 	var source := Label.new()
@@ -170,13 +198,13 @@ func _build_weights() -> void:
 		Settings.project_get("weights/motion_repo"), Settings.project_get("weights/text_repo"),
 		Settings.project_get("weights/revision")]
 	source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
-	_body.add_child(source)
+	_setup.add_child(source)
 
 	_presence = RichTextLabel.new()
 	_presence.bbcode_enabled = true
 	_presence.fit_content = true
 	_presence.custom_minimum_size = Vector2(0.0, 40.0)
-	_body.add_child(_presence)
+	_setup.add_child(_presence)
 
 	_token = LineEdit.new()
 	_token.secret = true
@@ -184,15 +212,15 @@ func _build_weights() -> void:
 	_token.tooltip_text = "Only needed for a gated mirror. The published repositories do not ask for one."
 	_token.text = String(Settings.editor_get("download/access_token"))
 	_token.text_changed.connect(func(value): Settings.editor_set("download/access_token", value))
-	_body.add_child(_token)
+	_setup.add_child(_token)
 
 	_reverify = CheckBox.new()
 	_reverify.text = "Re-hash existing"
 	_reverify.tooltip_text = "Check the files already on disk against the manifest instead of trusting their size. Slow over 15 GiB."
-	_body.add_child(_reverify)
+	_setup.add_child(_reverify)
 
 	var buttons := HBoxContainer.new()
-	_body.add_child(buttons)
+	_setup.add_child(buttons)
 	_download_button = _button(buttons, "Download", _on_download,
 			"Fetch both repositories and verify every file against the manifest. About 15.2 GiB. Files already in place are kept, so this also resumes and repairs.")
 	_download_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -202,25 +230,15 @@ func _build_weights() -> void:
 	_download_bar = ProgressBar.new()
 	_download_bar.max_value = 1.0
 	_download_bar.step = 0.001
-	_body.add_child(_download_bar)
+	_setup.add_child(_download_bar)
 
-	_download_status = _message(_body, 2)
+	_download_status = _message(_setup, 2)
 
 
 func _build_runtime() -> void:
-	_body.add_child(HSeparator.new())
-	_runtime_toggle = Button.new()
-	_runtime_toggle.toggle_mode = true
-	_runtime_toggle.tooltip_text = "Backend, VRAM and thread settings for kmd-generate."
-	_runtime_toggle.toggled.connect(_on_runtime_toggled)
-	_body.add_child(_runtime_toggle)
-
-	_runtime = VBoxContainer.new()
-	_runtime.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(_runtime)
-
+	_section(_setup, "Runtime")
 	var backend_row := HBoxContainer.new()
-	_runtime.add_child(backend_row)
+	_setup.add_child(backend_row)
 	var backend_label := Label.new()
 	backend_label.text = "Backend"
 	backend_row.add_child(backend_label)
@@ -234,7 +252,7 @@ func _build_runtime() -> void:
 	backend_row.add_child(_backend)
 
 	var numbers := HBoxContainer.new()
-	_runtime.add_child(numbers)
+	_setup.add_child(numbers)
 	_chunk = _spin(numbers, "Chunk", 1, 32, int(Settings.editor_get("runtime/text_layer_chunk")),
 			"Text layers held at once, 1 to 32. Fewer lowers peak VRAM and costs speed, but never below the 1002 MiB token embedding.")
 	_chunk.value_changed.connect(func(value): Settings.editor_set("runtime/text_layer_chunk", int(value)))
@@ -250,16 +268,14 @@ func _build_runtime() -> void:
 	_sysmem.tooltip_text = "Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access, so it buys completion rather than speed."
 	_sysmem.button_pressed = bool(Settings.editor_get("runtime/sysmem_fallback"))
 	_sysmem.toggled.connect(func(pressed): Settings.editor_set("runtime/sysmem_fallback", pressed))
-	_runtime.add_child(_sysmem)
-
-	_on_runtime_toggled(false)
+	_setup.add_child(_sysmem)
 
 
 ## A folding pane has to look like one, or it reads as a button that lost its
 ## panel.
-func _on_runtime_toggled(pressed: bool) -> void:
-	_runtime.visible = pressed
-	_runtime_toggle.text = "▾  Runtime" if pressed else "▸  Runtime"
+func _on_setup_toggled(pressed: bool) -> void:
+	_setup.visible = pressed
+	_setup_toggle.text = "▾  Setup" if pressed else "▸  Setup"
 
 
 func _on_backend_selected(index: int) -> void:
@@ -548,12 +564,71 @@ func _process(_delta: float) -> void:
 	if exit_code != 0:
 		_set_message(_status, "kmd-generate exited with %d. See its console output." % exit_code)
 	elif _load_motion(_pending_output):
+		_refresh_clips()
+		_clips.select(_clip_dirs.find(_pending_output))
 		_set_message(_status, "Done.")
 	else:
 		_set_message(_status, "%s produced no readable motion. See the console." % _pending_output)
 
 
 # --- motion ------------------------------------------------------------------
+
+
+## Every generation under the output root, newest first. Picking one here is
+## what the Target and Save sections then work on, so an older take can be
+## revisited without hunting for its folder.
+func _refresh_clips() -> void:
+	var root := String(Settings.project_get("output/root"))
+	var found := []
+	for name in DirAccess.get_directories_at(root):
+		var dir := root.path_join(name)
+		var positions := dir.path_join("root_positions.f32")
+		if not FileAccess.file_exists(positions):
+			continue
+		found.append({"dir": dir, "time": FileAccess.get_modified_time(positions)})
+	found.sort_custom(func(a, b): return a["time"] > b["time"])
+
+	_clips.clear()
+	_clip_dirs = PackedStringArray()
+	if found.is_empty():
+		_clips.add_item("no clips under %s" % root)
+		_clips.set_item_disabled(0, true)
+		_clips.disabled = true
+		return
+
+	_clips.disabled = false
+	for entry in found:
+		_clip_dirs.append(entry["dir"])
+		_clips.add_item(_clip_label(entry["dir"]))
+	# Selecting nothing yet: loading a clip is the user asking for it, not a
+	# side effect of the list refreshing.
+	_clips.select(-1)
+
+
+func _clip_label(dir: String) -> String:
+	var prompt := ""
+	var file := FileAccess.open(dir.path_join("prompt.txt"), FileAccess.READ)
+	if file != null:
+		prompt = file.get_as_text().strip_edges().replace("
+", " ")
+		file.close()
+	if prompt.is_empty():
+		prompt = dir.get_file()
+	if prompt.length() > 26:
+		prompt = prompt.substr(0, 25) + "…"
+
+	var frames := 0
+	var positions := FileAccess.open(dir.path_join("root_positions.f32"), FileAccess.READ)
+	if positions != null:
+		frames = int(positions.get_length() / 12)
+		positions.close()
+	return "%s  %d" % [prompt, frames]
+
+
+func _on_clip_selected(index: int) -> void:
+	if index < 0 or index >= _clip_dirs.size():
+		return
+	_load_motion(_clip_dirs[index])
 
 
 func _on_load_folder() -> void:
