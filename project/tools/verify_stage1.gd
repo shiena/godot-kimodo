@@ -55,7 +55,14 @@ func _check_rest_skeleton() -> void:
 	_expect(skeleton.get_bone_count() == 22, "rest skeleton has 22 bones")
 	_expect(skeleton.get_bone_name(0) == "pelvis", "bone 0 is the pelvis")
 	_expect(skeleton.get_bone_parent(20) == 18, "left wrist hangs off the left elbow")
-	_expect(skeleton.get_bone_rest(0).origin == Vector3.ZERO, "pelvis rest is at the origin")
+	# SMPL-X puts the pelvis at the origin; a humanoid Skeleton3D is expected to
+	# stand on the floor, so the pelvis carries the whole chain up.
+	_expect(absf(skeleton.get_bone_rest(0).origin.y - KimodoSmplx.get_ground_offset()) < 1e-5,
+			"the pelvis rest is lifted by the ground offset (%.3f m)" % KimodoSmplx.get_ground_offset())
+	var lowest := INF
+	for bone in skeleton.get_bone_count():
+		lowest = minf(lowest, skeleton.get_bone_global_rest(bone).origin.y)
+	_expect(absf(lowest) < 1e-5, "the lowest rest joint stands on y = 0 (got %.5f)" % lowest)
 	_expect(skeleton.get_bone_rest(4).basis.is_equal_approx(Basis()),
 			"rest rotations are identity, so the rest is translation only")
 	skeleton.free()

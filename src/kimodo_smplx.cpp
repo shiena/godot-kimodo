@@ -20,13 +20,16 @@ Skeleton3D *build_rest_skeleton(const char *p_node_name, const char *const *p_bo
 	Skeleton3D *skeleton = memnew(Skeleton3D);
 	skeleton->set_name(p_node_name);
 
+	// Only the pelvis moves: lifting it carries the rest of the chain with it.
+	const Vector3 stand(0.0f, static_cast<real_t>(KimodoSmplx::get_ground_offset()), 0.0f);
 	for (int joint = 0; joint < JOINTS; ++joint) {
 		skeleton->add_bone(String(p_bone_names[joint]));
 		if (smplx22::PARENT[joint] >= 0) {
 			skeleton->set_bone_parent(joint, smplx22::PARENT[joint]);
 		}
 		// Every SMPL-X rest rotation is identity, so translation alone is enough.
-		skeleton->set_bone_rest(joint, Transform3D(Basis(), smplx22::rest_offset(joint)));
+		skeleton->set_bone_rest(joint,
+								Transform3D(Basis(), smplx22::rest_offset(joint) + (joint == 0 ? stand : Vector3())));
 	}
 	skeleton->reset_bone_poses();
 	return skeleton;
@@ -43,6 +46,7 @@ void KimodoSmplx::_bind_methods() {
 	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("get_rest_offsets"), &KimodoSmplx::get_rest_offsets);
 	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("get_rest_positions"), &KimodoSmplx::get_rest_positions);
 	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("get_rest_height"), &KimodoSmplx::get_rest_height);
+	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("get_ground_offset"), &KimodoSmplx::get_ground_offset);
 	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("create_rest_skeleton"), &KimodoSmplx::create_rest_skeleton);
 	ClassDB::bind_static_method("KimodoSmplx", D_METHOD("create_humanoid_skeleton"),
 								&KimodoSmplx::create_humanoid_skeleton);
@@ -110,6 +114,18 @@ double KimodoSmplx::get_rest_height() {
 		highest = Math::max(highest, rest[joint].y);
 	}
 	return highest - lowest;
+}
+
+double KimodoSmplx::get_ground_offset() {
+	const PackedVector3Array rest = get_rest_positions();
+	real_t lowest = rest[0].y;
+	for (int joint = 1; joint < JOINTS; ++joint) {
+		lowest = Math::min(lowest, rest[joint].y);
+	}
+	// The toe joint rather than the sole: there is no sole in the data. A real
+	// clip plants that joint about 15 mm above the ground, so this stands the
+	// rest within that of where the model itself puts it.
+	return -lowest;
 }
 
 Skeleton3D *KimodoSmplx::create_rest_skeleton() {

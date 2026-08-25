@@ -44,8 +44,9 @@ change.
 |---|---|
 | `get_parents()`, `get_joint_names()` | The 22-joint hierarchy, matching `motion_decode.cpp` |
 | `get_humanoid_bone_names()` | The `SkeletonProfileHumanoid` name for each joint |
-| `get_rest_offsets()`, `get_rest_positions()`, `get_rest_height()` | Rest pose, and the height the retarget scale is measured against |
-| `create_rest_skeleton()` | A fresh 22-bone `Skeleton3D` under SMPL-X joint names |
+| `get_rest_offsets()`, `get_rest_positions()`, `get_rest_height()` | Rest pose as SMPL-X publishes it, pelvis at the origin, and the height the retarget scale is measured against |
+| `get_ground_offset()` | How far the pelvis is lifted so the skeletons below stand on y = 0 |
+| `create_rest_skeleton()` | A fresh 22-bone `Skeleton3D` under SMPL-X joint names, standing on the floor |
 | `create_humanoid_skeleton()` | The same rest under profile bone names, so the no-model preview is a retarget target like any other |
 | `build_mannequin(skeleton, owner)` | Hangs boxes and capsules off the bones. Left limbs warm, right limbs cold, spine grey, with a yellow nose marker for facing |
 

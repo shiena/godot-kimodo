@@ -36,7 +36,13 @@ public:
 	// so it reads slightly shorter than the actual body height.
 	static double get_rest_height();
 
-	// Returns a fresh 22-bone Skeleton3D. The caller owns it.
+	// Pelvis height above the lowest rest joint. SMPL-X puts its pelvis at the
+	// origin, while a humanoid Skeleton3D is expected to stand on y = 0, so the
+	// skeletons built here are lifted by this much. The tables above stay as
+	// SMPL-X publishes them.
+	static double get_ground_offset();
+
+	// Returns a fresh 22-bone Skeleton3D standing on y = 0. The caller owns it.
 	static Skeleton3D *create_rest_skeleton();
 
 	// The same rest under SkeletonProfileHumanoid bone names, so it doubles as
