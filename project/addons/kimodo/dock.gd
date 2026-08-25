@@ -13,15 +13,25 @@ extends VBoxContainer
 ## kmd-generate owns the GPU for the length of a run, so only one is allowed at
 ## a time.
 
-const SETTING_PREFIX := "kimodo/"
-const DEFAULTS := {
-	"generator_path": "",
-	"motion_gguf": "",
-	"text_bundle": "",
-	"output_root": "user://kimodo_out",
-}
+const Settings := preload("res://addons/kimodo/settings.gd")
+const Downloader := preload("res://addons/kimodo/downloader.gd")
 
-var _fields := {}
+var _setup_toggle: Button
+var _setup: VBoxContainer
+var _generator_path: LineEdit
+var _models_dir: LineEdit
+var _token: LineEdit
+var _reverify: CheckBox
+var _download_button: Button
+var _cancel_button: Button
+var _download_bar: ProgressBar
+var _download_status: Label
+var _presence: RichTextLabel
+
+var _backend: OptionButton
+var _threads: SpinBox
+var _chunk: SpinBox
+
 var _prompt: TextEdit
 var _frames: SpinBox
 var _steps: SpinBox
@@ -35,11 +45,11 @@ var _bone_map_path: LineEdit
 var _clip_name: LineEdit
 
 var _motion: KimodoMotion
-var _motion_dir := ""
 var _bone_map: BoneMap
 var _pid := -1
 var _pending_output := ""
 var _dialog: FileDialog
+var _downloader: Node
 
 
 func _init() -> void:
@@ -47,6 +57,12 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	_downloader = Downloader.new()
+	_downloader.name = "Downloader"
+	_downloader.progress.connect(_on_download_progress)
+	_downloader.finished.connect(_on_download_finished)
+	add_child(_downloader)
+
 	_build_ui()
 	set_process(false)
 
@@ -54,11 +70,17 @@ func _ready() -> void:
 func _build_ui() -> void:
 	add_theme_constant_override(&"separation", 6)
 
-	_section("Generator")
-	for key in ["generator_path", "motion_gguf", "text_bundle"]:
-		_fields[key] = _path_row(key.capitalize(), key, key != "text_bundle")
-	_fields["output_root"] = _path_row("Output root", "output_root", false)
+	_setup_toggle = Button.new()
+	_setup_toggle.toggle_mode = true
+	_setup_toggle.text = "Setup"
+	_setup_toggle.toggled.connect(func(pressed): _setup.visible = pressed)
+	add_child(_setup_toggle)
 
+	_setup = VBoxContainer.new()
+	add_child(_setup)
+	_build_setup()
+
+	_section(self, "Generate")
 	_prompt = TextEdit.new()
 	_prompt.placeholder_text = "a person walks forward and waves with the left hand"
 	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
@@ -67,8 +89,8 @@ func _build_ui() -> void:
 
 	var numbers := HBoxContainer.new()
 	add_child(numbers)
-	_frames = _spin(numbers, "Frames", 16, 600, 120)
-	_steps = _spin(numbers, "Steps", 1, 200, 30)
+	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.project_get("generation/frames")))
+	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.project_get("generation/steps")))
 	_seed = _spin(numbers, "Seed", 0, 1 << 30, 0)
 
 	_generate_button = Button.new()
@@ -80,7 +102,7 @@ func _build_ui() -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_status)
 
-	_section("Motion")
+	_section(self, "Motion")
 	var load_button := Button.new()
 	load_button.text = "Load an existing output folder..."
 	load_button.pressed.connect(_on_load_folder)
@@ -90,18 +112,16 @@ func _build_ui() -> void:
 	_motion_label.text = "No motion loaded."
 	add_child(_motion_label)
 
-	_section("Target")
+	_section(self, "Target")
 	var bone_map_row := HBoxContainer.new()
 	add_child(bone_map_row)
 	_bone_map_path = LineEdit.new()
-	_bone_map_path.placeholder_text = "BoneMap resource (leave empty for profile names)"
+	_bone_map_path.placeholder_text = "BoneMap resource (empty means profile names)"
 	_bone_map_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_bone_map_path.text = String(Settings.project_get("target/bone_map"))
 	_bone_map_path.text_changed.connect(_on_bone_map_changed)
 	bone_map_row.add_child(_bone_map_path)
-	var pick_map := Button.new()
-	pick_map.text = "..."
-	pick_map.pressed.connect(func(): _pick(_bone_map_path, true, "*.tres,*.res"))
-	bone_map_row.add_child(pick_map)
+	bone_map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
 
 	var refresh := Button.new()
 	refresh.text = "Use the selected Skeleton3D"
@@ -118,7 +138,7 @@ func _build_ui() -> void:
 	apply.pressed.connect(_on_apply)
 	add_child(apply)
 
-	_section("Save")
+	_section(self, "Save")
 	_clip_name = LineEdit.new()
 	_clip_name.text = "kimodo_motion"
 	add_child(_clip_name)
@@ -131,37 +151,132 @@ func _build_ui() -> void:
 	save_library.pressed.connect(_on_save_library)
 	add_child(save_library)
 
-	_refresh_target()
+	_on_bone_map_changed(_bone_map_path.text)
+	_refresh_presence()
+	# Nothing here works until the generator and the weights are in place, so the
+	# setup pane opens itself until they are.
+	_setup_toggle.button_pressed = _generator_path.text.is_empty() or not _weights_present()
+	_setup.visible = _setup_toggle.button_pressed
 
 
-func _section(title: String) -> void:
-	var separator := HSeparator.new()
-	add_child(separator)
+func _build_setup() -> void:
+	_section(_setup, "Paths")
+	_generator_path = _editor_path_row("kmd-generate executable", "paths/generator", true)
+	_models_dir = _editor_path_row("Model directory", "paths/models_dir", false)
+
+	_section(_setup, "Weights")
+	var source := Label.new()
+	source.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	source.text = "%s and %s at %s.\nChange them in Project Settings under kimodo/weights." % [
+		Settings.project_get("weights/motion_repo"), Settings.project_get("weights/text_repo"),
+		Settings.project_get("weights/revision")]
+	_setup.add_child(source)
+
+	_presence = RichTextLabel.new()
+	_presence.fit_content = true
+	_presence.custom_minimum_size = Vector2(0.0, 40.0)
+	_setup.add_child(_presence)
+
+	_token = LineEdit.new()
+	_token.secret = true
+	_token.placeholder_text = "Hugging Face access token (only needed for a gated mirror)"
+	_token.text = String(Settings.editor_get("download/access_token"))
+	_token.text_changed.connect(func(value): Settings.editor_set("download/access_token", value))
+	_setup.add_child(_token)
+
+	_reverify = CheckBox.new()
+	_reverify.text = "Re-hash files that are already there"
+	_setup.add_child(_reverify)
+
+	var buttons := HBoxContainer.new()
+	_setup.add_child(buttons)
+	_download_button = Button.new()
+	_download_button.text = "Download the weights"
+	_download_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_download_button.pressed.connect(_on_download)
+	buttons.add_child(_download_button)
+	_cancel_button = Button.new()
+	_cancel_button.text = "Cancel"
+	_cancel_button.disabled = true
+	_cancel_button.pressed.connect(func(): _downloader.cancel())
+	buttons.add_child(_cancel_button)
+
+	_download_bar = ProgressBar.new()
+	_download_bar.max_value = 1.0
+	_download_bar.step = 0.001
+	_setup.add_child(_download_bar)
+
+	_download_status = Label.new()
+	_download_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_setup.add_child(_download_status)
+
+	_section(_setup, "Runtime")
+	var backend_row := HBoxContainer.new()
+	_setup.add_child(backend_row)
+	var backend_label := Label.new()
+	backend_label.text = "Backend"
+	backend_row.add_child(backend_label)
+	_backend = OptionButton.new()
+	_backend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_backend.add_item("Vulkan when available")
+	_backend.add_item("CPU")
+	_backend.selected = 1 if String(Settings.editor_get("runtime/backend")) == "cpu" else 0
+	_backend.item_selected.connect(_on_backend_selected)
+	backend_row.add_child(_backend)
+
+	var runtime_numbers := HBoxContainer.new()
+	_setup.add_child(runtime_numbers)
+	_threads = _spin(runtime_numbers, "CPU threads", 0, 256, int(Settings.editor_get("runtime/cpu_threads")))
+	_threads.value_changed.connect(func(value): Settings.editor_set("runtime/cpu_threads", int(value)))
+	_chunk = _spin(runtime_numbers, "Text layers per chunk", 1, 32,
+			int(Settings.editor_get("runtime/text_layer_chunk")))
+	_chunk.value_changed.connect(func(value): Settings.editor_set("runtime/text_layer_chunk", int(value)))
+
+	var note := Label.new()
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.text = "Fewer text layers per chunk lowers peak VRAM and costs speed. The thread count only applies on the CPU backend; 0 leaves it to the machine."
+	note.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
+	_setup.add_child(note)
+
+
+func _on_backend_selected(index: int) -> void:
+	Settings.editor_set("runtime/backend", "cpu" if index == 1 else "auto")
+
+
+func _section(parent: Control, title: String) -> void:
+	parent.add_child(HSeparator.new())
 	var label := Label.new()
 	label.text = title
 	label.add_theme_color_override(&"font_color", Color(0.6, 0.75, 1.0))
-	add_child(label)
+	parent.add_child(label)
 
 
-func _path_row(label_text: String, key: String, file_mode: bool) -> LineEdit:
+func _editor_path_row(label_text: String, key: String, file_mode: bool) -> LineEdit:
 	var label := Label.new()
 	label.text = label_text
-	add_child(label)
+	_setup.add_child(label)
 
 	var row := HBoxContainer.new()
-	add_child(row)
+	_setup.add_child(row)
 	var edit := LineEdit.new()
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	edit.text = _setting(key)
-	edit.text_submitted.connect(func(value): _store(key, value))
-	edit.focus_exited.connect(func(): _store(key, edit.text))
+	edit.text = String(Settings.editor_get(key))
+	edit.text_changed.connect(_on_path_typed.bind(key))
 	row.add_child(edit)
-
-	var browse := Button.new()
-	browse.text = "..."
-	browse.pressed.connect(func(): _pick(edit, file_mode, "*", key))
-	row.add_child(browse)
+	row.add_child(_browse(func(): _pick_into(edit, file_mode, "*", key)))
 	return edit
+
+
+func _on_path_typed(value: String, key: String) -> void:
+	Settings.editor_set(key, value)
+	_refresh_presence()
+
+
+func _browse(action: Callable) -> Button:
+	var button := Button.new()
+	button.text = "..."
+	button.pressed.connect(action)
+	return button
 
 
 func _spin(parent: Control, label_text: String, low: int, high: int, value: int) -> SpinBox:
@@ -179,24 +294,7 @@ func _spin(parent: Control, label_text: String, low: int, high: int, value: int)
 	return spin
 
 
-## Typed access, so the callers keep their String inference.
-func _field(key: String) -> LineEdit:
-	return _fields[key]
-
-
-func _setting(key: String) -> String:
-	var settings := EditorInterface.get_editor_settings()
-	var full := SETTING_PREFIX + key
-	if not settings.has_setting(full):
-		return DEFAULTS[key]
-	return str(settings.get_setting(full))
-
-
-func _store(key: String, value: String) -> void:
-	EditorInterface.get_editor_settings().set_setting(SETTING_PREFIX + key, value)
-
-
-func _pick(target: LineEdit, file_mode: bool, filter: String = "*", key: String = "") -> void:
+func _pick_into(target: LineEdit, file_mode: bool, filter: String = "*", key: String = "") -> void:
 	if is_instance_valid(_dialog):
 		_dialog.queue_free()
 	_dialog = FileDialog.new()
@@ -214,9 +312,78 @@ func _pick(target: LineEdit, file_mode: bool, filter: String = "*", key: String 
 func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 	target.text = path
 	if not key.is_empty():
-		_store(key, path)
+		Settings.editor_set(key, path)
 	if target == _bone_map_path:
 		_on_bone_map_changed(path)
+	_refresh_presence()
+
+
+# --- weights -----------------------------------------------------------------
+
+
+func _weights_present() -> bool:
+	return FileAccess.file_exists(Settings.motion_gguf_path()) \
+			and DirAccess.dir_exists_absolute(Settings.text_bundle_path())
+
+
+func _refresh_presence() -> void:
+	var motion := Settings.motion_gguf_path()
+	var bundle := Settings.text_bundle_path()
+	var bundle_files := 0
+	if DirAccess.dir_exists_absolute(bundle):
+		bundle_files = DirAccess.get_files_at(bundle).size()
+
+	var lines := PackedStringArray()
+	lines.append(_presence_line("motion GGUF", motion, FileAccess.file_exists(motion)))
+	lines.append(_presence_line("text bundle, %d files" % bundle_files, bundle, bundle_files > 0))
+	_presence.text = "\n".join(lines)
+
+
+func _presence_line(label: String, path: String, present: bool) -> String:
+	var colour := "#7fd07f" if present else "#e0a050"
+	var mark := "present" if present else "missing"
+	return "[color=%s]%s[/color]  %s\n[color=#909090]%s[/color]" % [colour, mark, label, path]
+
+
+func _on_download() -> void:
+	if _downloader.is_busy():
+		return
+	var destination := _models_dir.text.strip_edges()
+	if destination.is_empty():
+		_download_status.text = "Set a model directory first."
+		return
+
+	var revision := String(Settings.project_get("weights/revision"))
+	var repos := [
+		{
+			"repo": String(Settings.project_get("weights/motion_repo")),
+			"revision": revision,
+			"include": [Settings.MOTION_RELATIVE],
+		},
+		{
+			"repo": String(Settings.project_get("weights/text_repo")),
+			"revision": revision,
+			"include": [Settings.TEXT_BUNDLE_RELATIVE + "/*"],
+		},
+	]
+
+	_download_button.disabled = true
+	_cancel_button.disabled = false
+	_download_status.text = "Reading the manifests..."
+	_downloader.run(destination, repos, _token.text.strip_edges(), _reverify.button_pressed)
+
+
+func _on_download_progress(text: String, ratio: float) -> void:
+	_download_bar.value = ratio
+	_download_status.text = text
+
+
+func _on_download_finished(ok: bool, message: String) -> void:
+	_download_button.disabled = false
+	_cancel_button.disabled = true
+	_download_bar.value = 1.0 if ok else 0.0
+	_download_status.text = message
+	_refresh_presence()
 
 
 # --- generation --------------------------------------------------------------
@@ -225,19 +392,18 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 func _on_generate() -> void:
 	if _pid >= 0:
 		return
-	var missing := PackedStringArray()
-	for key in ["generator_path", "motion_gguf", "text_bundle"]:
-		if _field(key).text.strip_edges().is_empty():
-			missing.append(key)
-	if not missing.is_empty():
-		_status.text = "Set %s first." % ", ".join(missing)
+	if _generator_path.text.strip_edges().is_empty():
+		_status.text = "Set the kmd-generate path under Setup."
+		return
+	if not _weights_present():
+		_status.text = "The weights are not in place. Download them under Setup."
 		return
 	if _prompt.text.strip_edges().is_empty():
 		_status.text = "The prompt is empty."
 		return
 
 	var stamp := str(Time.get_unix_time_from_system()).replace(".", "")
-	var out_dir := _field("output_root").text.path_join("gen_%s" % stamp)
+	var out_dir: String = String(Settings.project_get("output/root")).path_join("gen_%s" % stamp)
 	DirAccess.make_dir_recursive_absolute(out_dir)
 
 	var prompt_path := out_dir.path_join("prompt.txt")
@@ -250,7 +416,7 @@ func _on_generate() -> void:
 
 	_pid = _spawn_generator(prompt_path, out_dir)
 	if _pid < 0:
-		_status.text = "Could not start %s." % _field("generator_path").text
+		_status.text = "Could not start %s." % _generator_path.text
 		return
 	_pending_output = out_dir
 	_generate_button.disabled = true
@@ -260,16 +426,27 @@ func _on_generate() -> void:
 
 ## The one place that knows how a motion gets generated.
 func _spawn_generator(prompt_path: String, out_dir: String) -> int:
+	# OS.create_process() takes no environment, and the three knobs kimodo.cpp
+	# reads are environment variables, so they go on the editor process and the
+	# child inherits them.
+	var environment := Settings.runtime_environment()
+	for variable in environment:
+		var value: String = environment[variable]
+		if value.is_empty():
+			OS.unset_environment(variable)
+		else:
+			OS.set_environment(variable, value)
+
 	var arguments := [
-		ProjectSettings.globalize_path(_field("motion_gguf").text),
-		ProjectSettings.globalize_path(_field("text_bundle").text),
+		ProjectSettings.globalize_path(Settings.motion_gguf_path()),
+		ProjectSettings.globalize_path(Settings.text_bundle_path()),
 		ProjectSettings.globalize_path(prompt_path),
 		str(int(_frames.value)),
 		str(int(_steps.value)),
 		str(int(_seed.value)),
 		ProjectSettings.globalize_path(out_dir),
 	]
-	return OS.create_process(ProjectSettings.globalize_path(_field("generator_path").text), arguments, false)
+	return OS.create_process(ProjectSettings.globalize_path(_generator_path.text), arguments, false)
 
 
 func _process(_delta: float) -> void:
@@ -313,7 +490,6 @@ func _load_motion(dir: String) -> bool:
 		_motion_label.text = "Failed to load %s." % dir
 		return false
 	_motion = motion
-	_motion_dir = dir
 	_motion_label.text = "%s\n%d frames, %.2f s at %.0f fps" % [dir, motion.get_frame_count(),
 			motion.get_duration(), motion.get_fps()]
 	return true
@@ -428,21 +604,32 @@ func _on_save_clip() -> void:
 	var animation := _bake()
 	if animation == null:
 		return
-	_save_dialog("res://%s.tres" % _clip_name.text, func(path):
-		var error := KimodoLibrary.save_animation(animation, path)
-		_status.text = "Saved %s." % path if error == OK else "Save failed (%d)." % error
-		EditorInterface.get_resource_filesystem().scan())
+	_save_dialog("res://%s.tres" % _clip_name.text, _write_clip.bind(animation))
+
+
+func _write_clip(path: String, animation: Animation) -> void:
+	var error := KimodoLibrary.save_animation(animation, path)
+	if error == OK:
+		_status.text = "Saved %s." % path
+	else:
+		_status.text = "Saving %s failed (%d)." % [path, error]
+	EditorInterface.get_resource_filesystem().scan()
 
 
 func _on_save_library() -> void:
 	var animation := _bake()
 	if animation == null:
 		return
-	_save_dialog("res://kimodo_clips.tres", func(path):
-		var error := KimodoLibrary.save_to_library(animation, path, StringName(_clip_name.text))
-		_status.text = "Added %s to %s." % [_clip_name.text, path] if error == OK \
-				else "Save failed (%d)." % error
-		EditorInterface.get_resource_filesystem().scan())
+	_save_dialog(String(Settings.project_get("output/library")), _write_library.bind(animation))
+
+
+func _write_library(path: String, animation: Animation) -> void:
+	var error := KimodoLibrary.save_to_library(animation, path, StringName(_clip_name.text))
+	if error == OK:
+		_status.text = "Added %s to %s." % [_clip_name.text, path]
+	else:
+		_status.text = "Saving %s failed (%d)." % [path, error]
+	EditorInterface.get_resource_filesystem().scan()
 
 
 func _save_dialog(default_path: String, on_selected: Callable) -> void:

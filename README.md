@@ -92,9 +92,51 @@ Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
 ## The dock
 
 Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
-right. It generates a clip, or loads an OUT_DIR that already exists, bakes it
-onto the selected `Skeleton3D`, and saves the result. Executable and weight
-paths are remembered in the editor settings under `kimodo/`.
+right. Its Setup pane downloads the weights and points at `kmd-generate`; the
+rest of the panel generates a clip, or loads an OUT_DIR that already exists,
+bakes it onto the selected `Skeleton3D`, and saves the result.
+
+### Weights
+
+The Setup pane fetches both published repositories and verifies every file
+against the manifest the same way `scripts/download_gguf_weights.sh` does. That
+is 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, split across 36 files,
+and neither repository needs an access token.
+
+The transfer runs through **curl**, which is the one external dependency the
+addon has. It ships with Windows 10 and later, macOS, and effectively every
+Linux distribution. curl is used rather than `HTTPRequest` because it resumes a
+partial file: over 15 GiB a dropped connection is a matter of when, not whether,
+and `HTTPRequest` would restart the file it was on.
+
+### Runtime knobs
+
+kimodo.cpp reads three environment variables, and `OS.create_process()` takes no
+environment, so the dock sets them on the editor process and lets `kmd-generate`
+inherit them.
+
+| Setting | Variable | Effect |
+|---|---|---|
+| Text layers per chunk | `KIMODO_TEXT_LAYER_CHUNK` | 1 to 32, default 8. Fewer layers lowers peak VRAM and costs speed |
+| Backend | `KIMODO_BACKEND` | `cpu` forces the CPU backend; anything else tries Vulkan first |
+| CPU threads | `KIMODO_THREADS` | Only applies on the CPU backend; 0 leaves it to the machine |
+
+`kmd-generate` takes seven positional arguments and nothing else, so the two
+classifier-free guidance weights it passes are fixed at 2.0. Exposing them would
+mean widening that command line first.
+
+### Where each setting lives
+
+**Editor settings** (`kimodo/`, per machine, never in version control) hold what
+is true of this machine: where `kmd-generate` and the multi-gigabyte weights sit,
+what this GPU and CPU can take, and a personal access token.
+
+**Project settings** (`kimodo/`, committed in `project.godot`) hold what the
+project agrees on: which repositories to fetch and at which revision, where
+generated output and the shared `AnimationLibrary` live, the house defaults for
+frames and steps, and the project's `BoneMap`.
+
+The prompt and the seed live in neither. They belong to one invocation.
 
 ## Preview scene
 
