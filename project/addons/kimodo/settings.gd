@@ -24,6 +24,8 @@ const EDITOR_DEFAULTS := {
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,
 	"runtime/text_layer_chunk": 8,
+	"runtime/gpu_index": 0,
+	"runtime/sysmem_fallback": false,
 	"download/access_token": "",
 }
 
@@ -104,15 +106,29 @@ static func text_bundle_path() -> String:
 	return String(editor_get("paths/models_dir")).path_join(TEXT_BUNDLE_RELATIVE)
 
 
-## The three environment variables kimodo.cpp reads. OS.create_process() cannot
-## pass an environment to the child, so the caller sets them on the editor
-## process and lets the child inherit them.
+## Everything the child process reads from its environment. OS.create_process()
+## cannot pass an environment, so the caller sets these on the editor process
+## and lets the child inherit them. An empty value means unset.
 static func runtime_environment() -> Dictionary:
 	var out := {}
+
+	# kimodo.cpp reads these three.
 	out["KIMODO_TEXT_LAYER_CHUNK"] = str(int(editor_get("runtime/text_layer_chunk")))
-	# Only the exact value "cpu" forces the CPU backend; anything else tries
-	# Vulkan first, so "auto" is expressed by clearing the variable.
+	# Only the exact string "cpu" forces the CPU backend. Every other value,
+	# "gpu" included, means the same as unset: try Vulkan and fall back to CPU
+	# when no device answers. There is no way to require the GPU.
 	out["KIMODO_BACKEND"] = "cpu" if String(editor_get("runtime/backend")) == "cpu" else ""
 	var threads := int(editor_get("runtime/cpu_threads"))
 	out["KIMODO_THREADS"] = str(threads) if threads > 0 else ""
+
+	# These two are ggml's rather than kimodo's, but the same process reads them.
+	# kimodo.cpp calls ggml_backend_vk_init(0), so choosing a GPU on a machine
+	# with several means reordering which one device 0 is.
+	var gpu := int(editor_get("runtime/gpu_index"))
+	out["GGML_VK_VISIBLE_DEVICES"] = str(gpu) if gpu > 0 else ""
+	# Lets a buffer land in system memory when device-local VRAM runs out. It
+	# then crosses the PCIe bus on every access, so it buys completion rather
+	# than speed.
+	out["GGML_VK_ALLOW_SYSMEM_FALLBACK"] = "1" if bool(editor_get("runtime/sysmem_fallback")) else ""
+
 	return out

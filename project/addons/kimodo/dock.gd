@@ -31,6 +31,8 @@ var _presence: RichTextLabel
 var _backend: OptionButton
 var _threads: SpinBox
 var _chunk: SpinBox
+var _gpu_index: SpinBox
+var _sysmem: CheckBox
 
 var _prompt: TextEdit
 var _frames: SpinBox
@@ -231,10 +233,18 @@ func _build_setup() -> void:
 	_chunk = _spin(runtime_numbers, "Text layers per chunk", 1, 32,
 			int(Settings.editor_get("runtime/text_layer_chunk")))
 	_chunk.value_changed.connect(func(value): Settings.editor_set("runtime/text_layer_chunk", int(value)))
+	_gpu_index = _spin(runtime_numbers, "GPU index", 0, 15, int(Settings.editor_get("runtime/gpu_index")))
+	_gpu_index.value_changed.connect(func(value): Settings.editor_set("runtime/gpu_index", int(value)))
+
+	_sysmem = CheckBox.new()
+	_sysmem.text = "Spill to system memory when VRAM runs out"
+	_sysmem.button_pressed = bool(Settings.editor_get("runtime/sysmem_fallback"))
+	_sysmem.toggled.connect(func(pressed): Settings.editor_set("runtime/sysmem_fallback", pressed))
+	_setup.add_child(_sysmem)
 
 	var note := Label.new()
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.text = "Fewer text layers per chunk lowers peak VRAM and costs speed. The thread count only applies on the CPU backend; 0 leaves it to the machine."
+	note.text = "Fewer text layers per chunk lowers peak VRAM and costs speed, but never below the 1002 MiB token embedding. The thread count only applies on the CPU backend; 0 leaves it to the machine. Vulkan 1.2 is required, and the GPU index reorders which device kimodo sees as device 0."
 	note.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
 	_setup.add_child(note)
 

@@ -118,12 +118,36 @@ inherit them.
 | Setting | Variable | Effect |
 |---|---|---|
 | Text layers per chunk | `KIMODO_TEXT_LAYER_CHUNK` | 1 to 32, default 8. Fewer layers lowers peak VRAM and costs speed |
-| Backend | `KIMODO_BACKEND` | `cpu` forces the CPU backend; anything else tries Vulkan first |
+| Backend | `KIMODO_BACKEND` | Only the exact string `cpu` does anything; everything else means "try Vulkan, fall back to CPU" |
 | CPU threads | `KIMODO_THREADS` | Only applies on the CPU backend; 0 leaves it to the machine |
+| GPU index | `GGML_VK_VISIBLE_DEVICES` | kimodo.cpp calls `ggml_backend_vk_init(0)`, so picking a GPU means reordering which one is device 0 |
+| Spill to system memory | `GGML_VK_ALLOW_SYSMEM_FALLBACK` | Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access |
+
+There is no way to require the GPU. When no Vulkan device answers, the run
+falls back to the CPU without saying so.
 
 `kmd-generate` takes seven positional arguments and nothing else, so the two
 classifier-free guidance weights it passes are fixed at 2.0. Exposing them would
 mean widening that command line first.
+
+### What it takes to run
+
+| | Requirement | Why |
+|---|---|---|
+| Disk | 15.2 GiB | The published bundle |
+| VRAM, Vulkan path | 2 GB in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers. No chunk size gets under it |
+| Vulkan | 1.2 | ggml-vulkan refuses to initialise below it |
+| RAM, CPU path | The same figures move from VRAM to RAM | The backend allocates from host memory instead |
+
+Those peaks do not add up: `encode()` frees the token embedding before the layer
+loop, frees each layer chunk before the next, and the motion weights only load
+once the text encoder is done with the prompt.
+
+On Windows, `configure_vulkan_f32_parity()` in kimodo.cpp is compiled out. It is
+guarded by `#if defined(__unix__)`, so `GGML_VK_DISABLE_COOPMAT`,
+`GGML_VK_DISABLE_COOPMAT2` and `GGML_VK_DISABLE_F16` are not set and the
+cooperative-matrix path can convert the F32 reference weights to FP16. Set them
+by hand if the output has to match the reference.
 
 ### Where each setting lives
 
