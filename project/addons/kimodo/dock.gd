@@ -135,6 +135,8 @@ func _build_ui() -> void:
 			"Retarget onto the selected Skeleton3D, or the first one in the open scene.")
 
 	_target_label = RichTextLabel.new()
+	# Off by default, and without it the tags render as literal text.
+	_target_label.bbcode_enabled = true
 	_target_label.fit_content = true
 	_target_label.custom_minimum_size = Vector2(0.0, 54.0)
 	_body.add_child(_target_label)
@@ -175,6 +177,7 @@ func _build_setup() -> void:
 	_setup.add_child(source)
 
 	_presence = RichTextLabel.new()
+	_presence.bbcode_enabled = true
 	_presence.fit_content = true
 	_presence.custom_minimum_size = Vector2(0.0, 36.0)
 	_setup.add_child(_presence)
