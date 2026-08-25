@@ -1,4 +1,7 @@
 [submodule "godot-cpp"]
 	path = godot-cpp
 	url = https://github.com/godotengine/godot-cpp.git
-	branch = 4.3
+	branch = 4.4
+[submodule "kimodo.cpp"]
+	path = kimodo.cpp
+	url = https://github.com/localai-org/kimodo.cpp.git
