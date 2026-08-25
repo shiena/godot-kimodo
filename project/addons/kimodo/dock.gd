@@ -52,7 +52,9 @@ var _preview_camera: Camera3D
 var _preview_play: Button
 var _preview_slider: HSlider
 var _preview_time := 0.0
-var _preview_running := true
+# Paused until asked: a dock that opens with a figure running in it is a dock
+# that animates in the corner of the eye all day.
+var _preview_running := false
 var _preview_yaw := 0.6
 var _preview_pitch := 0.05
 var _preview_distance := 2.8
@@ -902,7 +904,7 @@ func _build_preview() -> void:
 
 	var row := HBoxContainer.new()
 	_body.add_child(row)
-	_preview_play = _button(row, "Pause", _on_preview_play)
+	_preview_play = _button(row, "Play", _on_preview_play)
 	_preview_slider = HSlider.new()
 	_preview_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_preview_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -1024,13 +1026,18 @@ func _preview_bone_origin(bone: int) -> Vector3:
 
 
 func _on_preview_play() -> void:
-	_preview_running = not _preview_running
-	_preview_play.text = "Pause" if _preview_running else "Play"
+	_set_preview_running(not _preview_running)
+
+
+## One place decides the label, so the button cannot end up describing a state
+## the preview is not in.
+func _set_preview_running(running: bool) -> void:
+	_preview_running = running
+	_preview_play.text = "Pause" if running else "Play"
 
 
 func _on_preview_scrubbed(value: float) -> void:
-	_preview_running = false
-	_preview_play.text = "Play"
+	_set_preview_running(false)
 	_preview_time = value * maxf(0.001, _motion.get_duration() if _motion != null else 1.0)
 
 
