@@ -1,7 +1,9 @@
-#ifndef EXAMPLE_REGISTER_TYPES_H
-#define EXAMPLE_REGISTER_TYPES_H
+#ifndef KIMODO_REGISTER_TYPES_H
+#define KIMODO_REGISTER_TYPES_H
 
-void initialize_gdextension_types();
-void uninitialize_gdextension_types();
+#include <godot_cpp/core/class_db.hpp>
 
-#endif // EXAMPLE_REGISTER_TYPES_H
+void initialize_kimodo_types(godot::ModuleInitializationLevel p_level);
+void uninitialize_kimodo_types(godot::ModuleInitializationLevel p_level);
+
+#endif // KIMODO_REGISTER_TYPES_H

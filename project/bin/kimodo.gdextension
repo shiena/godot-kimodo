@@ -1,0 +1,23 @@
+[configuration]
+
+entry_symbol = "kimodo_library_init"
+compatibility_minimum = "4.4"
+reloadable = false
+
+[libraries]
+
+; Limited to what kimodo.cpp itself supports. It needs a C++23 compiler and the
+; GGML Vulkan backend, and the 8B LLM2Vec text encoder needs desktop-class VRAM,
+; which rules out mobile and web. The upstream README builds on Linux, and
+; CMakeLists.txt carries an MSVC branch, so x86_64 Linux and Windows are the
+; two targets. Relative paths let the extension sit anywhere in the project.
+
+windows.x86_64.single.debug = "./windows/kimodo.windows.template_debug.x86_64.dll"
+windows.x86_64.single.release = "./windows/kimodo.windows.template_release.x86_64.dll"
+windows.x86_64.double.debug = "./windows/kimodo.windows.template_debug.x86_64.double.dll"
+windows.x86_64.double.release = "./windows/kimodo.windows.template_release.x86_64.double.dll"
+
+linux.x86_64.single.debug = "./linux/libkimodo.linux.template_debug.x86_64.so"
+linux.x86_64.single.release = "./linux/libkimodo.linux.template_release.x86_64.so"
+linux.x86_64.double.debug = "./linux/libkimodo.linux.template_debug.x86_64.double.so"
+linux.x86_64.double.release = "./linux/libkimodo.linux.template_release.x86_64.double.so"

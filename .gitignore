@@ -4,7 +4,12 @@
 
 # Ignore library files but not the gdextension file
 /bin/**
-!project/bin/*.gdextension
+/project/bin/**
+!/project/bin/*.gdextension
+!/project/bin/*.gdextension.uid
+
+# Ignore the fixture that scripts/make_sample_motion.py regenerates
+/project/motion_sample/
 
 # Ignore scons database
 .sconsign*.dblite
