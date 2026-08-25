@@ -13,27 +13,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Test a few selected combinations of parameters ("test case matrix").
-        # While it would be nice to test all needed combinations, in practice this would a waste of CI usage time.
-        # By building just with a few combinations, we only need a few runners,
-        # while still achieving adequate coverage.
-        # To make a full build with all combinations, use the make_build.yml workflow instead.
+        # kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, and its
+        # 8B text encoder needs desktop-class VRAM, so x86_64 Linux and Windows
+        # are the only targets this extension ships for. One target type per
+        # platform is enough coverage here; make_build.yml builds both.
         include:
           - target: { platform: linux, arch: x86_64, os: ubuntu-22.04 }
             target-type: template_debug
-            float-precision: double
+            float-precision: single
           - target: { platform: windows, arch: x86_64, os: windows-latest }
             target-type: template_release
             float-precision: single
-          - target: { platform: macos, arch: universal, os: macos-latest }
-            target-type: template_debug
-            float-precision: single
-          - target: { platform: android, arch: arm64, os: ubuntu-22.04 }
-            target-type: template_debug
-            float-precision: single
-          - target: { platform: web, arch: wasm32, os: ubuntu-22.04 }
-            target-type: template_release
-            float-precision: double
 
     runs-on: ${{ matrix.target.os }}
     steps:
@@ -53,18 +43,11 @@ jobs:
       #  run: |
       #    clang-format src/** --dry-run --Werror
 
-      # Add linux x86_32 toolchain
-      - name: Install multilib support
-        if: ${{ matrix.target.platform == 'linux' && matrix.target.arch == 'x86_32' }}
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc-multilib g++-multilib
-
       # Setup dependencies
       - name: Setup godot-cpp
         uses: ./godot-cpp/.github/actions/setup-godot-cpp
         with:
           platform: ${{ matrix.target.platform }}
-          em-version: 3.1.62
 
       # Build GDExtension (with caches)
 
