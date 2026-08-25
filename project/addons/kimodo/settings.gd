@@ -26,6 +26,7 @@ const EDITOR_DEFAULTS := {
 	"runtime/gpu_index": 0,
 	"runtime/sysmem_fallback": false,
 	"download/access_token": "",
+	"preview/height": 360,
 }
 
 const PROJECT_DEFAULTS := {

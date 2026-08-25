@@ -56,6 +56,7 @@ var _preview_running := true
 var _preview_yaw := 0.6
 var _preview_pitch := 0.05
 var _preview_distance := 2.8
+var _preview_container: SubViewportContainer
 
 var _models_dir: LineEdit
 var _token: LineEdit
@@ -847,19 +848,29 @@ func _write_library(path: String, animation: Animation) -> void:
 func _build_preview() -> void:
 	_section(_body, "Preview")
 
-	var container := SubViewportContainer.new()
-	container.stretch = true
-	container.custom_minimum_size = Vector2(0.0, 220.0)
-	container.tooltip_text = "Drag to orbit, wheel to zoom."
-	container.gui_input.connect(_on_preview_input)
-	_body.add_child(container)
+	_preview_container = SubViewportContainer.new()
+	_preview_container.stretch = true
+	# A ScrollContainer hands every child its minimum height and scrolls the
+	# rest, so expanding does nothing here and the number below is the height.
+	_preview_container.custom_minimum_size = Vector2(0.0, float(Settings.editor_get("preview/height")))
+	_preview_container.tooltip_text = "Drag to orbit, wheel to zoom."
+	_preview_container.gui_input.connect(_on_preview_input)
+	_body.add_child(_preview_container)
+
+	var grip := HSeparator.new()
+	grip.mouse_filter = Control.MOUSE_FILTER_STOP
+	grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	grip.custom_minimum_size = Vector2(0.0, 8.0)
+	grip.tooltip_text = "Drag to make the preview taller or shorter."
+	grip.gui_input.connect(_on_preview_resized)
+	_body.add_child(grip)
 
 	_preview = SubViewport.new()
 	# Without its own world this would render whatever the editor viewport is
 	# looking at.
 	_preview.own_world_3d = true
 	_preview.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
-	container.add_child(_preview)
+	_preview_container.add_child(_preview)
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
@@ -975,6 +986,16 @@ func _aim_preview() -> void:
 	# look_at() refuses to work on a node that is not in the tree yet, and this
 	# runs once while the pane is still being built.
 	_preview_camera.look_at_from_position(pivot + direction * _preview_distance, pivot, Vector3.UP)
+
+
+## The height is a setting rather than a session value: a dock that forgets how
+## tall the preview was is a dock that has to be adjusted every time it opens.
+func _on_preview_resized(event: InputEvent) -> void:
+	if not (event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT)):
+		return
+	var height := clampf(_preview_container.custom_minimum_size.y + event.relative.y, 120.0, 900.0)
+	_preview_container.custom_minimum_size.y = height
+	Settings.editor_set("preview/height", int(height))
 
 
 func _on_preview_play() -> void:
