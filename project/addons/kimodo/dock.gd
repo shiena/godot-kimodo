@@ -45,6 +45,18 @@ var _bone_map_path: LineEdit
 var _clip_name: LineEdit
 var _last_saved := ""
 
+var _preview: SubViewport
+var _preview_skeleton: Skeleton3D
+var _preview_player: AnimationPlayer
+var _preview_camera: Camera3D
+var _preview_play: Button
+var _preview_slider: HSlider
+var _preview_time := 0.0
+var _preview_running := true
+var _preview_yaw := 0.6
+var _preview_pitch := 0.05
+var _preview_distance := 2.8
+
 var _models_dir: LineEdit
 var _token: LineEdit
 var _reverify: CheckBox
@@ -107,11 +119,13 @@ func _ready() -> void:
 	_build_motion()
 	_build_target()
 	_build_save()
+	_build_preview()
 
 	_on_bone_map_changed(_bone_map_path.text)
 	_refresh_presence()
 	_refresh_clips()
 	_on_setup_toggled(not _weights_present())
+	set_process(true)
 
 
 func _build_generate() -> void:
@@ -556,7 +570,6 @@ func _on_generate() -> void:
 	_pending_output = out_dir
 	_generate_button.disabled = true
 	_set_message(_status, "Generating into %s ..." % out_dir)
-	set_process(true)
 
 
 ## The one place that knows how a motion gets generated.
@@ -583,13 +596,11 @@ func _spawn_generator(prompt_path: String, out_dir: String) -> int:
 	return OS.create_process(ProjectSettings.globalize_path(Settings.generator_path()), arguments, false)
 
 
-func _process(_delta: float) -> void:
-	if _pid < 0:
-		return
-	if OS.is_process_running(_pid):
+func _process(delta: float) -> void:
+	_advance_preview(delta)
+	if _pid < 0 or OS.is_process_running(_pid):
 		return
 
-	set_process(false)
 	var exit_code := OS.get_process_exit_code(_pid)
 	_pid = -1
 	_generate_button.disabled = false
@@ -683,6 +694,7 @@ func _load_motion(dir: String) -> bool:
 		_set_message(_motion_label, "Failed to load %s." % dir)
 		return false
 	_motion = motion
+	_reload_preview()
 	_set_message(_motion_label, "%d frames, %.2f s at %.0f fps\n%s" % [motion.get_frame_count(),
 			motion.get_duration(), motion.get_fps(), dir])
 	return true
@@ -827,6 +839,167 @@ func _write_library(path: String, animation: Animation) -> void:
 	else:
 		_set_message(_status, "Saving %s failed (%d)." % [path, error])
 	EditorInterface.get_resource_filesystem().scan()
+
+
+## A viewport of its own, on the SMPL-X mannequin rather than the target rig:
+## the rig lives in the edited scene and cannot be in two worlds at once. What
+## it shows is the motion as generated, before retargeting.
+func _build_preview() -> void:
+	_section(_body, "Preview")
+
+	var container := SubViewportContainer.new()
+	container.stretch = true
+	container.custom_minimum_size = Vector2(0.0, 220.0)
+	container.tooltip_text = "Drag to orbit, wheel to zoom."
+	container.gui_input.connect(_on_preview_input)
+	_body.add_child(container)
+
+	_preview = SubViewport.new()
+	# Without its own world this would render whatever the editor viewport is
+	# looking at.
+	_preview.own_world_3d = true
+	_preview.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	container.add_child(_preview)
+
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = Color(0.10, 0.10, 0.12)
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color(0.35, 0.36, 0.42)
+	environment.ambient_light_energy = 0.6
+
+	_preview_camera = Camera3D.new()
+	_preview_camera.current = true
+	_preview_camera.environment = environment
+	_preview.add_child(_preview_camera)
+
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-45.0, -35.0, 0.0)
+	_preview.add_child(sun)
+
+	var ground := MeshInstance3D.new()
+	ground.mesh = _preview_grid()
+	_preview.add_child(ground)
+
+	_preview_skeleton = KimodoSmplx.create_rest_skeleton()
+	_preview.add_child(_preview_skeleton)
+	KimodoSmplx.build_mannequin(_preview_skeleton, null)
+
+	_preview_player = AnimationPlayer.new()
+	_preview.add_child(_preview_player)
+
+	var row := HBoxContainer.new()
+	_body.add_child(row)
+	_preview_play = _button(row, "Pause", _on_preview_play)
+	_preview_slider = HSlider.new()
+	_preview_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_preview_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_preview_slider.min_value = 0.0
+	_preview_slider.max_value = 1.0
+	_preview_slider.step = 0.001
+	_preview_slider.value_changed.connect(_on_preview_scrubbed)
+	row.add_child(_preview_slider)
+
+	_aim_preview()
+
+
+## A ground plane to judge contact against. The camera follows the root, so a
+## world-fixed grid also gives the travel something to read against.
+func _preview_grid() -> ImmediateMesh:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.vertex_color_use_as_albedo = true
+
+	var mesh := ImmediateMesh.new()
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
+	var extent := 16.0
+	var offset := -extent
+	while offset <= extent + 0.001:
+		var colour := Color(0.30, 0.30, 0.34) if not is_zero_approx(fmod(offset, 1.0)) 				else Color(0.42, 0.42, 0.48)
+		for pair in [[Vector3(-extent, 0.0, offset), Vector3(extent, 0.0, offset)],
+				[Vector3(offset, 0.0, -extent), Vector3(offset, 0.0, extent)]]:
+			mesh.surface_set_color(colour)
+			mesh.surface_add_vertex(pair[0])
+			mesh.surface_set_color(colour)
+			mesh.surface_add_vertex(pair[1])
+		offset += 0.25
+	mesh.surface_end()
+	return mesh
+
+
+## Rebuilt whenever the motion changes, because the clip is baked once rather
+## than evaluated per frame.
+func _reload_preview() -> void:
+	if _preview_player == null:
+		return
+	if _preview_player.has_animation_library(&""):
+		_preview_player.remove_animation_library(&"")
+	_preview_time = 0.0
+	if _motion == null:
+		return
+
+	var animation := _motion.bake_animation(_preview.get_path_to(_preview_skeleton))
+	if animation == null:
+		return
+	animation.loop_mode = Animation.LOOP_LINEAR
+	var library := AnimationLibrary.new()
+	library.add_animation(&"motion", animation)
+	_preview_player.add_animation_library(&"", library)
+	_preview_player.play(&"motion")
+	_preview_player.pause()
+
+
+## The clock is turned by hand. An AnimationPlayer left to itself does not
+## advance reliably inside the editor, and seeking keeps the slider and the pose
+## describing the same frame.
+func _advance_preview(delta: float) -> void:
+	if _motion == null or _preview_player == null or _preview_player.current_animation.is_empty():
+		return
+	var length := _motion.get_duration()
+	if _preview_running and length > 0.0:
+		_preview_time = fmod(_preview_time + delta, length)
+		_preview_slider.set_value_no_signal(_preview_time / length)
+	_preview_player.seek(_preview_time, true)
+	_aim_preview()
+
+
+func _aim_preview() -> void:
+	var pivot := Vector3(0.0, 0.95, 0.0)
+	if _motion != null and _motion.get_frame_count() > 0:
+		var frame := clampi(roundi(_preview_time * _motion.get_fps()), 0, _motion.get_frame_count() - 1)
+		pivot = _motion.get_root_position(frame) * Vector3(1.0, 0.0, 1.0) + Vector3(0.0, 0.95, 0.0)
+	var direction := Vector3(
+			cos(_preview_pitch) * sin(_preview_yaw),
+			sin(_preview_pitch),
+			cos(_preview_pitch) * cos(_preview_yaw))
+	# look_at() refuses to work on a node that is not in the tree yet, and this
+	# runs once while the pane is still being built.
+	_preview_camera.look_at_from_position(pivot + direction * _preview_distance, pivot, Vector3.UP)
+
+
+func _on_preview_play() -> void:
+	_preview_running = not _preview_running
+	_preview_play.text = "Pause" if _preview_running else "Play"
+
+
+func _on_preview_scrubbed(value: float) -> void:
+	_preview_running = false
+	_preview_play.text = "Play"
+	_preview_time = value * maxf(0.001, _motion.get_duration() if _motion != null else 1.0)
+
+
+func _on_preview_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+		_preview_yaw -= event.relative.x * 0.008
+		_preview_pitch = clampf(_preview_pitch - event.relative.y * 0.008, -1.4, 1.4)
+		_aim_preview()
+	elif event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_preview_distance = maxf(0.8, _preview_distance - 0.25)
+			_aim_preview()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_preview_distance = minf(12.0, _preview_distance + 0.25)
+			_aim_preview()
 
 
 ## Reveals the last file saved from here, so the answer to "where did that go?"
