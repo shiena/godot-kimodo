@@ -22,3 +22,7 @@ config/icon="res://icon.svg"
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/kimodo/plugin.cfg")
+
+[kimodo]
+
+target/bone_map="res://addons/kimodo/samples/smplx_bone_map.tres"
