@@ -13,6 +13,11 @@ extends ScrollContainer
 ## kmd-generate owns the GPU for the length of a run, so only one is allowed at
 ## a time.
 ##
+## The order runs from what gets used every day to what gets used once. Weights
+## stay visible rather than folding away when they are complete, because a
+## bundle can be re-fetched, moved or pinned to another revision. Only the
+## runtime knobs fold.
+##
 ## A dock is narrow, so anything longer than a few words goes in a tooltip. A
 ## wrapped sentence turns into ten lines of height here, and a button that does
 ## not wrap sets a minimum width the user cannot pull back in.
@@ -21,24 +26,6 @@ const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
 
 var _body: VBoxContainer
-
-var _setup_toggle: Button
-var _setup: VBoxContainer
-var _generator_path: LineEdit
-var _models_dir: LineEdit
-var _token: LineEdit
-var _reverify: CheckBox
-var _download_button: Button
-var _cancel_button: Button
-var _download_bar: ProgressBar
-var _download_status: Label
-var _presence: RichTextLabel
-
-var _backend: OptionButton
-var _threads: SpinBox
-var _chunk: SpinBox
-var _gpu_index: SpinBox
-var _sysmem: CheckBox
 
 var _prompt: TextEdit
 var _frames: SpinBox
@@ -51,6 +38,23 @@ var _motion_label: Label
 var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
 var _clip_name: LineEdit
+
+var _models_dir: LineEdit
+var _token: LineEdit
+var _reverify: CheckBox
+var _download_button: Button
+var _cancel_button: Button
+var _download_bar: ProgressBar
+var _download_status: Label
+var _presence: RichTextLabel
+
+var _runtime_toggle: Button
+var _runtime: VBoxContainer
+var _backend: OptionButton
+var _threads: SpinBox
+var _chunk: SpinBox
+var _gpu_index: SpinBox
+var _sysmem: CheckBox
 
 var _motion: KimodoMotion
 var _bone_map: BoneMap
@@ -82,21 +86,18 @@ func _ready() -> void:
 	_body.add_theme_constant_override(&"separation", 6)
 	add_child(_body)
 
-	_build_ui()
+	_build_generate()
+	_build_motion()
+	_build_target()
+	_build_save()
+	_build_weights()
+	_build_runtime()
+
+	_on_bone_map_changed(_bone_map_path.text)
+	_refresh_presence()
 
 
-func _build_ui() -> void:
-	_setup_toggle = Button.new()
-	_setup_toggle.toggle_mode = true
-	_setup_toggle.text = "Setup"
-	_setup_toggle.toggled.connect(func(pressed): _setup.visible = pressed)
-	_body.add_child(_setup_toggle)
-
-	_setup = VBoxContainer.new()
-	_setup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_child(_setup)
-	_build_setup()
-
+func _build_generate() -> void:
 	_section(_body, "Generate")
 	_prompt = TextEdit.new()
 	_prompt.placeholder_text = "a person walks forward and waves"
@@ -113,12 +114,16 @@ func _build_ui() -> void:
 	_generate_button = _button(_body, "Generate", _on_generate)
 	_status = _message(_body, 3)
 
+
+func _build_motion() -> void:
 	_section(_body, "Motion")
 	_button(_body, "Load folder...", _on_load_folder,
 			"Read an OUT_DIR that kmd-generate has already written.")
 	_motion_label = _message(_body, 2)
 	_motion_label.text = "No motion loaded."
 
+
+func _build_target() -> void:
 	_section(_body, "Target")
 	var bone_map_row := HBoxContainer.new()
 	_body.add_child(bone_map_row)
@@ -135,7 +140,6 @@ func _build_ui() -> void:
 			"Retarget onto the selected Skeleton3D, or the first one in the open scene.")
 
 	_target_label = RichTextLabel.new()
-	# Off by default, and without it the tags render as literal text.
 	_target_label.bbcode_enabled = true
 	_target_label.fit_content = true
 	_target_label.custom_minimum_size = Vector2(0.0, 54.0)
@@ -143,6 +147,8 @@ func _build_ui() -> void:
 
 	_button(_body, "Bake", _on_apply, "Put the clip on an AnimationPlayer in the open scene.")
 
+
+func _build_save() -> void:
 	_section(_body, "Save")
 	_clip_name = LineEdit.new()
 	_clip_name.text = "kimodo_motion"
@@ -152,36 +158,25 @@ func _build_ui() -> void:
 	_button(_body, "Add to library...", _on_save_library,
 			"Add or replace this name in an AnimationLibrary, creating it if needed.")
 
-	_on_bone_map_changed(_bone_map_path.text)
-	_refresh_presence()
-	# Nothing here works until the generator and the weights are in place, so the
-	# setup pane opens itself until they are.
-	_setup_toggle.button_pressed = Settings.generator_path().is_empty() or not _weights_present()
-	_setup.visible = _setup_toggle.button_pressed
 
+func _build_weights() -> void:
+	_section(_body, "Weights")
+	_models_dir = _path_row(_body, "Model directory", "paths/models_dir",
+			"Root of the bundle. The motion GGUF and the text bundle sit under it in the layout the upstream download script writes.")
 
-func _build_setup() -> void:
-	_section(_setup, "Paths")
-	_generator_path = _editor_path_row("kmd-generate", "paths/generator", true,
-			"Leave empty to use the copy scons builds into the addon. Fill it in only to point at a build made somewhere else.")
-	_generator_path.placeholder_text = "bundled with the addon"
-	_models_dir = _editor_path_row("Models", "paths/models_dir", false,
-			"Root of the downloaded bundle. The motion GGUF and the text bundle sit under it in the layout the upstream download script writes.")
-
-	_section(_setup, "Weights")
 	var source := Label.new()
 	source.text = "Source: kimodo/weights"
 	source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Project Settings under kimodo/weights." % [
 		Settings.project_get("weights/motion_repo"), Settings.project_get("weights/text_repo"),
 		Settings.project_get("weights/revision")]
 	source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
-	_setup.add_child(source)
+	_body.add_child(source)
 
 	_presence = RichTextLabel.new()
 	_presence.bbcode_enabled = true
 	_presence.fit_content = true
-	_presence.custom_minimum_size = Vector2(0.0, 54.0)
-	_setup.add_child(_presence)
+	_presence.custom_minimum_size = Vector2(0.0, 40.0)
+	_body.add_child(_presence)
 
 	_token = LineEdit.new()
 	_token.secret = true
@@ -189,17 +184,17 @@ func _build_setup() -> void:
 	_token.tooltip_text = "Only needed for a gated mirror. The published repositories do not ask for one."
 	_token.text = String(Settings.editor_get("download/access_token"))
 	_token.text_changed.connect(func(value): Settings.editor_set("download/access_token", value))
-	_setup.add_child(_token)
+	_body.add_child(_token)
 
 	_reverify = CheckBox.new()
 	_reverify.text = "Re-hash existing"
 	_reverify.tooltip_text = "Check the files already on disk against the manifest instead of trusting their size. Slow over 15 GiB."
-	_setup.add_child(_reverify)
+	_body.add_child(_reverify)
 
 	var buttons := HBoxContainer.new()
-	_setup.add_child(buttons)
+	_body.add_child(buttons)
 	_download_button = _button(buttons, "Download", _on_download,
-			"Fetch both repositories and verify every file against the manifest. About 15.2 GiB.")
+			"Fetch both repositories and verify every file against the manifest. About 15.2 GiB. Files already in place are kept, so this also resumes and repairs.")
 	_download_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_cancel_button = _button(buttons, "Cancel", func(): _downloader.cancel())
 	_cancel_button.disabled = true
@@ -207,13 +202,25 @@ func _build_setup() -> void:
 	_download_bar = ProgressBar.new()
 	_download_bar.max_value = 1.0
 	_download_bar.step = 0.001
-	_setup.add_child(_download_bar)
+	_body.add_child(_download_bar)
 
-	_download_status = _message(_setup, 2)
+	_download_status = _message(_body, 2)
 
-	_section(_setup, "Runtime")
+
+func _build_runtime() -> void:
+	_body.add_child(HSeparator.new())
+	_runtime_toggle = Button.new()
+	_runtime_toggle.toggle_mode = true
+	_runtime_toggle.tooltip_text = "Backend, VRAM and thread settings for kmd-generate."
+	_runtime_toggle.toggled.connect(_on_runtime_toggled)
+	_body.add_child(_runtime_toggle)
+
+	_runtime = VBoxContainer.new()
+	_runtime.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(_runtime)
+
 	var backend_row := HBoxContainer.new()
-	_setup.add_child(backend_row)
+	_runtime.add_child(backend_row)
 	var backend_label := Label.new()
 	backend_label.text = "Backend"
 	backend_row.add_child(backend_label)
@@ -226,15 +233,15 @@ func _build_setup() -> void:
 	_backend.item_selected.connect(_on_backend_selected)
 	backend_row.add_child(_backend)
 
-	var runtime_numbers := HBoxContainer.new()
-	_setup.add_child(runtime_numbers)
-	_chunk = _spin(runtime_numbers, "Chunk", 1, 32, int(Settings.editor_get("runtime/text_layer_chunk")),
+	var numbers := HBoxContainer.new()
+	_runtime.add_child(numbers)
+	_chunk = _spin(numbers, "Chunk", 1, 32, int(Settings.editor_get("runtime/text_layer_chunk")),
 			"Text layers held at once, 1 to 32. Fewer lowers peak VRAM and costs speed, but never below the 1002 MiB token embedding.")
 	_chunk.value_changed.connect(func(value): Settings.editor_set("runtime/text_layer_chunk", int(value)))
-	_threads = _spin(runtime_numbers, "Threads", 0, 256, int(Settings.editor_get("runtime/cpu_threads")),
+	_threads = _spin(numbers, "Threads", 0, 256, int(Settings.editor_get("runtime/cpu_threads")),
 			"Only applies on the CPU backend. 0 leaves it to the machine.")
 	_threads.value_changed.connect(func(value): Settings.editor_set("runtime/cpu_threads", int(value)))
-	_gpu_index = _spin(runtime_numbers, "GPU", 0, 15, int(Settings.editor_get("runtime/gpu_index")),
+	_gpu_index = _spin(numbers, "GPU", 0, 15, int(Settings.editor_get("runtime/gpu_index")),
 			"kimodo.cpp always opens Vulkan device 0, so this reorders which device that is.")
 	_gpu_index.value_changed.connect(func(value): Settings.editor_set("runtime/gpu_index", int(value)))
 
@@ -243,7 +250,16 @@ func _build_setup() -> void:
 	_sysmem.tooltip_text = "Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access, so it buys completion rather than speed."
 	_sysmem.button_pressed = bool(Settings.editor_get("runtime/sysmem_fallback"))
 	_sysmem.toggled.connect(func(pressed): Settings.editor_set("runtime/sysmem_fallback", pressed))
-	_setup.add_child(_sysmem)
+	_runtime.add_child(_sysmem)
+
+	_on_runtime_toggled(false)
+
+
+## A folding pane has to look like one, or it reads as a button that lost its
+## panel.
+func _on_runtime_toggled(pressed: bool) -> void:
+	_runtime.visible = pressed
+	_runtime_toggle.text = "▾  Runtime" if pressed else "▸  Runtime"
 
 
 func _on_backend_selected(index: int) -> void:
@@ -291,21 +307,21 @@ func _message(parent: Control, lines: int) -> Label:
 	return label
 
 
-func _editor_path_row(label_text: String, key: String, file_mode: bool, tooltip: String) -> LineEdit:
+func _path_row(parent: Control, label_text: String, key: String, tooltip: String) -> LineEdit:
 	var label := Label.new()
 	label.text = label_text
 	label.tooltip_text = tooltip
-	_setup.add_child(label)
+	parent.add_child(label)
 
 	var row := HBoxContainer.new()
-	_setup.add_child(row)
+	parent.add_child(row)
 	var edit := LineEdit.new()
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	edit.tooltip_text = tooltip
 	edit.text = String(Settings.editor_get(key))
 	edit.text_changed.connect(_on_path_typed.bind(key))
 	row.add_child(edit)
-	row.add_child(_browse(func(): _pick_into(edit, file_mode, "*", key)))
+	row.add_child(_browse(func(): _pick_into(edit, false, "*", key)))
 	return edit
 
 
@@ -359,24 +375,48 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 # --- weights -----------------------------------------------------------------
 
 
+## The files llm_text_encoder::load() insists on, so that "present" means
+## kmd-generate will accept the bundle rather than only that a directory turned
+## up. Checking the directory alone let a download that stopped halfway read as
+## complete.
+func _missing_weights() -> PackedStringArray:
+	var missing := PackedStringArray()
+	if not FileAccess.file_exists(Settings.motion_gguf_path()):
+		missing.append("kimodo-smplx-rp-v1-f32.gguf")
+
+	var bundle := Settings.text_bundle_path()
+	for name in ["tokenizer.gguf", "embedding.gguf", "final-norm.gguf"]:
+		if not FileAccess.file_exists(bundle.path_join(name)):
+			missing.append(name)
+	for layer in 32:
+		var name := "layer-%02d.gguf" % layer
+		if not FileAccess.file_exists(bundle.path_join(name)):
+			missing.append(name)
+	return missing
+
+
 func _weights_present() -> bool:
-	return FileAccess.file_exists(Settings.motion_gguf_path()) \
-			and DirAccess.dir_exists_absolute(Settings.text_bundle_path())
+	return _missing_weights().is_empty()
 
 
 func _refresh_presence() -> void:
-	var motion := Settings.motion_gguf_path()
-	var bundle := Settings.text_bundle_path()
-	var bundle_files := 0
-	if DirAccess.dir_exists_absolute(bundle):
-		bundle_files = DirAccess.get_files_at(bundle).size()
+	var generator := Settings.generator_path()
+	var missing := _missing_weights()
 
 	var lines := PackedStringArray()
-	lines.append(_presence_line("motion GGUF", FileAccess.file_exists(motion)))
-	lines.append(_presence_line("text bundle, %d files" % bundle_files, bundle_files > 0))
+	lines.append(_presence_line("kmd-generate", not generator.is_empty()))
+	if missing.is_empty():
+		lines.append(_presence_line("weights, all 36 files", true))
+	else:
+		lines.append(_presence_line("weights, %d of 36 missing" % missing.size(), false))
 	_presence.text = "\n".join(lines)
-	# The paths are long enough to wrap into a wall of text, so they live here.
-	_presence.tooltip_text = "%s\n%s" % [motion, bundle]
+
+	# Long paths and a long list of names both wrap into a wall of text, so the
+	# detail lives here.
+	_presence.tooltip_text = "%s\n%s\n%s\n\n%s" % [
+			generator if not generator.is_empty() else Settings.bundled_generator_path() + "  (not built)",
+			Settings.motion_gguf_path(), Settings.text_bundle_path(),
+			"complete" if missing.is_empty() else "missing: " + ", ".join(missing)]
 
 
 func _presence_line(label: String, present: bool) -> String:
@@ -389,7 +429,7 @@ func _on_download() -> void:
 		return
 	var destination := _models_dir.text.strip_edges()
 	if destination.is_empty():
-		_download_status.text = "Set a model directory first."
+		_set_message(_download_status, "Set a model directory first.")
 		return
 
 	var revision := String(Settings.project_get("weights/revision"))
@@ -408,7 +448,7 @@ func _on_download() -> void:
 
 	_download_button.disabled = true
 	_cancel_button.disabled = false
-	_download_status.text = "Reading the manifests..."
+	_set_message(_download_status, "Reading the manifests...")
 	_downloader.run(destination, repos, _token.text.strip_edges(), _reverify.button_pressed)
 
 
@@ -439,10 +479,10 @@ func _on_generate() -> void:
 	if _pid >= 0:
 		return
 	if Settings.generator_path().is_empty():
-		_set_message(_status, "No kmd-generate. Build it with scons, or point Setup at one.")
+		_set_message(_status, "No kmd-generate in the addon. Build it with scons.")
 		return
 	if not _weights_present():
-		_set_message(_status, "The weights are not in place. Download them under Setup.")
+		_set_message(_status, "The weights are incomplete. Download them under Weights below.")
 		return
 	if _prompt.text.strip_edges().is_empty():
 		_set_message(_status, "The prompt is empty.")

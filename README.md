@@ -131,12 +131,19 @@ Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
 ## The dock
 
 Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
-right. Its Setup pane downloads the weights; the rest of the panel generates a
-clip, or loads an OUT_DIR that already exists, bakes it onto the selected
-`Skeleton3D`, and saves the result.
+right. It generates a clip, or loads an OUT_DIR that already exists, bakes it
+onto the selected `Skeleton3D`, and saves the result.
 
-The kmd-generate field in Setup is an override. Left empty it uses the copy
-`scons` bundled with the addon, which is the usual case.
+The panel runs from what gets used every day down to what gets used once:
+Generate, Motion, Target, Save, then Weights, then a folded Runtime pane. There
+is no field for kmd-generate: the addon carries the copy `scons` built, and a
+different one is a matter of replacing that file.
+
+Weights stays visible even when the bundle is complete, because a bundle can be
+re-fetched, moved, or pinned to another revision. Download keeps whatever is
+already in place, so it resumes an interrupted fetch and repairs a damaged one.
+"Present" means every one of the 36 files `llm_text_encoder::load()` asks for,
+not merely that a directory turned up.
 
 ### Weights
 

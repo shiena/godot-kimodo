@@ -19,7 +19,6 @@ const EDITOR_PREFIX := "kimodo/"
 const PROJECT_PREFIX := "kimodo/"
 
 const EDITOR_DEFAULTS := {
-	"paths/generator": "",
 	"paths/models_dir": "user://kimodo_models",
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,
@@ -97,18 +96,15 @@ static func register() -> void:
 		ProjectSettings.add_property_info(info)
 
 
-## kmd-generate as scons bundles it. A path in the editor settings overrides
-## this, for a build made somewhere else.
+## kmd-generate as scons bundles it. There is no setting for this: the addon
+## carries its own build, and a different one is a matter of replacing the file.
 static func bundled_generator_path() -> String:
 	var platform := OS.get_name().to_lower()
 	return "res://addons/kimodo/bin/%s/kmd-generate%s" % [platform, ".exe" if platform == "windows" else ""]
 
 
-## The generator to run, or an empty string when there is none to run.
+## The generator to run, or an empty string when scons has not built one.
 static func generator_path() -> String:
-	var override := String(editor_get("paths/generator")).strip_edges()
-	if not override.is_empty():
-		return override
 	var bundled := bundled_generator_path()
 	return bundled if FileAccess.file_exists(bundled) else ""
 
