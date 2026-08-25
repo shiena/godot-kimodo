@@ -39,6 +39,15 @@ public:
 	// Returns a fresh 22-bone Skeleton3D. The caller owns it.
 	static Skeleton3D *create_rest_skeleton();
 
+	// The same rest under SkeletonProfileHumanoid bone names, so it doubles as
+	// a retarget target and as the preview when no model has been supplied.
+	//
+	// The rest is not taken from SkeletonProfile.get_reference_pose(): that is a
+	// schematic layout for the BoneMap editor in which every limb bone points
+	// straight up +Y, so both hands sit at the same height and the legs rise out
+	// of the hips. It is not a pose anything can be retargeted onto.
+	static Skeleton3D *create_humanoid_skeleton();
+
 	// Builds a preview mannequin by hanging a capsule off every bone. Left
 	// limbs are warm, right limbs are cold and the spine is grey, so a
 	// left/right flip is visible at a glance. Pass p_owner to make the nodes
