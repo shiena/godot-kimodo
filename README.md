@@ -151,6 +151,20 @@ check the contents as well, and the question says that instead.
 There is no field for kmd-generate: the addon carries the copy `scons` built,
 and a different one is a matter of replacing that file.
 
+A sample `BoneMap` sits at `addons/kimodo/samples/smplx_bone_map.tres`. It maps
+the humanoid profile onto SMPL-X joint names, which makes
+`KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as a
+worked example of the format. Regenerate it rather than editing it by hand:
+
+```sh
+godot --headless --path project -s res://tools/make_smplx_bone_map.gd
+```
+
+No map is shipped for Mixamo, VRM or any other rig, because getting one right
+means having that rig to check against. Godot fills that gap itself: select a
+`BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector
+offers auto-mapping against a skeleton.
+
 **Save** writes the clip as a standalone resource or into an `AnimationLibrary`,
 and **Open folder** reveals the last file it saved in the file manager.
 
