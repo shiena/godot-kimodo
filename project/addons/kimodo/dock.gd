@@ -688,9 +688,11 @@ func _refresh_clips() -> void:
 	for entry in found:
 		_clip_dirs.append(entry["dir"])
 		_clips.add_item(_clip_label(entry["dir"]))
-	# Selecting nothing yet: loading a clip is the user asking for it, not a
-	# side effect of the list refreshing.
-	_clips.select(-1)
+	# Nothing is selected by a refresh: loading a clip is the user asking for
+	# it, not a side effect. The clip already loaded is the exception, so that
+	# deleting or renaming another one does not look like it deselected this
+	# one. select() does not emit item_selected, so nothing reloads.
+	_clips.select(_clip_dirs.find(_loaded_clip) if not _loaded_clip.is_empty() else -1)
 	_refresh_clip_buttons()
 
 
@@ -782,11 +784,9 @@ func _apply_rename(clip: String) -> void:
 	if error != OK:
 		_set_message(_motion_label, "Rename failed (%d)." % error)
 		return
+	if _loaded_clip == clip:
+		_loaded_clip = destination
 	_refresh_clips()
-	var moved := _clip_dirs.find(destination)
-	if moved >= 0:
-		_clips.select(moved)
-	_refresh_clip_buttons()
 	_set_message(_motion_label, "Renamed to %s." % name)
 
 
@@ -820,7 +820,6 @@ func _apply_delete(clip: String) -> void:
 		_reload_preview()
 		_set_message(_motion_label, "No motion loaded.")
 	_refresh_clips()
-	_refresh_clip_buttons()
 	_set_message(_status, "%s is in the trash." % clip.get_file())
 
 
@@ -934,6 +933,10 @@ func _on_apply() -> void:
 
 	var library_name := StringName("kimodo")
 	if player.has_animation_library(library_name):
+		# Only when it is playing out of the library about to go, so baking
+		# does not stop a player that was showing something else.
+		if player.assigned_animation.begins_with("%s/" % library_name):
+			player.stop()
 		player.remove_animation_library(library_name)
 	var library := AnimationLibrary.new()
 	library.add_animation(StringName(_clip_name.text), animation)
@@ -1122,6 +1125,10 @@ func _preview_grid() -> ImmediateMesh:
 func _reload_preview() -> void:
 	if _preview_player == null:
 		return
+	# Stop before removing. A playing AnimationPlayer holds a bare pointer to
+	# the animation it is on, and taking the library away underneath it is a
+	# segfault on the next frame rather than an error.
+	_preview_player.stop()
 	if _preview_player.has_animation_library(&""):
 		_preview_player.remove_animation_library(&"")
 	_preview_time = 0.0

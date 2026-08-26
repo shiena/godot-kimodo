@@ -223,6 +223,9 @@ func _bake() -> void:
 	if animation == null:
 		return
 
+	# Stop first. A playing AnimationPlayer holds a bare pointer to the
+	# animation it is on, so removing its library segfaults the next frame.
+	_player.stop()
 	if _player.has_animation_library(&""):
 		_player.remove_animation_library(&"")
 	var library := AnimationLibrary.new()
