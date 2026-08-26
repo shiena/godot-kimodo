@@ -83,23 +83,29 @@ Error KimodoMotion::load_files(const String &p_rotations_path, const String &p_r
 		return error;
 	}
 
-	ERR_FAIL_COND_V_MSG(rotations.size() % ROT_STRIDE != 0, ERR_INVALID_DATA,
-						vformat("KimodoMotion: rotation element count %d does not divide into [T, %d, 4].",
-								rotations.size(), JOINTS));
 	ERR_FAIL_COND_V_MSG(positions.size() % 3 != 0, ERR_INVALID_DATA,
 						vformat("KimodoMotion: root position element count %d does not divide into [T, 3].",
 								positions.size()));
+	const int frames = positions.size() / 3;
+	ERR_FAIL_COND_V_MSG(frames <= 0, ERR_INVALID_DATA, "KimodoMotion: the motion has zero frames.");
 
-	const int rotation_frames = rotations.size() / ROT_STRIDE;
-	const int position_frames = positions.size() / 3;
-	ERR_FAIL_COND_V_MSG(rotation_frames != position_frames, ERR_INVALID_DATA,
-						vformat("KimodoMotion: frame count mismatch (rotations %d, root positions %d).",
-								rotation_frames, position_frames));
-	ERR_FAIL_COND_V_MSG(rotation_frames <= 0, ERR_INVALID_DATA, "KimodoMotion: the motion has zero frames.");
+	// The root translation is three floats a frame whatever the skeleton, so it
+	// fixes the frame count and the rotations then say how many joints a run
+	// produced. That is worth naming: kimodo.cpp generates for whichever
+	// skeleton the motion GGUF declares, and since it gained SOMA and G1 the
+	// answer is no longer always 22.
+	ERR_FAIL_COND_V_MSG(rotations.size() % (frames * 4) != 0, ERR_INVALID_DATA,
+						vformat("KimodoMotion: %d rotation floats is not a whole number of quaternions across %d frames.",
+								rotations.size(), frames));
+	const int joints = rotations.size() / (frames * 4);
+	ERR_FAIL_COND_V_MSG(joints != JOINTS, ERR_INVALID_DATA,
+						vformat("KimodoMotion: the motion has %d joints a frame and this addon reads the %d-joint "
+								"SMPL-X skeleton. A SOMA or G1 motion model generates the other sizes.",
+								joints, JOINTS));
 
 	local_rotations = rotations;
 	root_positions = positions;
-	frame_count = rotation_frames;
+	frame_count = frames;
 	emit_changed();
 	return OK;
 }
