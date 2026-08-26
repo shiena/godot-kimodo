@@ -68,6 +68,9 @@ var _preview_figure: Node3D
 var _preview_retargets := false
 
 var _models_dir: LineEdit
+var _output_dir: LineEdit
+## What to run after a path row changes, by settings key.
+var _path_hooks := {}
 var _token: LineEdit
 var _reverify: CheckBox
 var _download_button: Button
@@ -116,13 +119,14 @@ func _ready() -> void:
 
 	_setup_toggle = Button.new()
 	_setup_toggle.toggle_mode = true
-	_setup_toggle.tooltip_text = "The weight download and the runtime knobs."
+	_setup_toggle.tooltip_text = "Folders, the weight download and the runtime knobs."
 	_setup_toggle.toggled.connect(_on_setup_toggled)
 	_body.add_child(_setup_toggle)
 
 	_setup = VBoxContainer.new()
 	_setup.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(_setup)
+	_build_folders()
 	_build_weights()
 	_build_runtime()
 
@@ -164,7 +168,7 @@ func _build_motion() -> void:
 	_body.add_child(row)
 	_clips = OptionButton.new()
 	_clips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_clips.tooltip_text = "Everything generated under kimodo/output/root, newest first."
+	_clips.tooltip_text = "Everything generated under the output directory, newest first."
 	_clips.item_selected.connect(_on_clip_selected)
 	row.add_child(_clips)
 	var refresh := _browse(_refresh_clips)
@@ -225,11 +229,19 @@ func _build_save() -> void:
 			"Show the last file saved here in the file manager, or the folder it would go to.")
 
 
-func _build_weights() -> void:
-	_section(_setup, "Weights")
+## Both of these are gigabytes of files nobody commits, and both are a personal
+## answer, so they sit together and both live in editor settings.
+func _build_folders() -> void:
+	_section(_setup, "Folders")
 	_models_dir = _path_row(_setup, "Model directory", "paths/models_dir",
 			"Root of the bundle. The motion GGUF and the text bundle sit under it in the layout the upstream download script writes.")
+	_output_dir = _path_row(_setup, "Output directory", "paths/output_dir",
+			"Where a generation writes its folder. Per machine, so a teammate can put takes on another drive without touching project.godot.",
+			_refresh_clips)
 
+
+func _build_weights() -> void:
+	_section(_setup, "Weights")
 	var source := Label.new()
 	source.text = "Source: kimodo/weights"
 	source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Project Settings under kimodo/weights." % [
@@ -361,7 +373,10 @@ func _message(parent: Control, lines: int) -> Label:
 	return label
 
 
-func _path_row(parent: Control, label_text: String, key: String, tooltip: String) -> LineEdit:
+func _path_row(parent: Control, label_text: String, key: String, tooltip: String,
+		on_changed: Callable = Callable()) -> LineEdit:
+	if on_changed.is_valid():
+		_path_hooks[key] = on_changed
 	var label := Label.new()
 	label.text = label_text
 	label.tooltip_text = tooltip
@@ -381,7 +396,13 @@ func _path_row(parent: Control, label_text: String, key: String, tooltip: String
 
 func _on_path_typed(value: String, key: String) -> void:
 	Settings.editor_set(key, value)
+	_path_changed(key)
+
+
+func _path_changed(key: String) -> void:
 	_refresh_presence()
+	if _path_hooks.has(key):
+		_path_hooks[key].call()
 
 
 func _spin(parent: Control, label_text: String, low: int, high: int, value: int,
@@ -423,7 +444,7 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 		Settings.editor_set(key, path)
 	if target == _bone_map_path:
 		_on_bone_map_changed(path)
-	_refresh_presence()
+	_path_changed(key)
 
 
 # --- weights -----------------------------------------------------------------
@@ -572,7 +593,7 @@ func _on_generate() -> void:
 		return
 
 	var stamp := str(Time.get_unix_time_from_system()).replace(".", "")
-	var out_dir: String = String(Settings.project_get("output/root")).path_join("gen_%s" % stamp)
+	var out_dir: String = Settings.output_dir().path_join("gen_%s" % stamp)
 	DirAccess.make_dir_recursive_absolute(out_dir)
 
 	var prompt_path := out_dir.path_join("prompt.txt")
@@ -642,7 +663,7 @@ func _process(delta: float) -> void:
 ## what the Target and Save sections then work on, so an older take can be
 ## revisited without hunting for its folder.
 func _refresh_clips() -> void:
-	var root := String(Settings.project_get("output/root"))
+	var root := Settings.output_dir()
 	var found := []
 	for name in DirAccess.get_directories_at(root):
 		var dir := root.path_join(name)

@@ -9,9 +9,14 @@ extends RefCounted
 ## different hardware needs different answers.
 ##
 ## ProjectSettings holds what the project agrees on: which weights to fetch and
-## at which revision, where generated output and the shared AnimationLibrary
-## live, and the house defaults for a new clip. Everyone who opens the project
-## should get the same answers, so these travel with project.godot.
+## at which revision, where the shared AnimationLibrary and BoneMap live, and the
+## house defaults for a new clip. Everyone who opens the project should get the
+## same answers, so these travel with project.godot.
+##
+## The line between them is whether two people on one project want the same
+## answer. Somewhere to put gigabytes of generated takes is not that: it is the
+## same kind of answer as where the weights sit, and putting it in project.godot
+## makes one teammate pointing it at another drive a change to a tracked file.
 ##
 ## The prompt and the seed live in neither. They belong to one invocation.
 
@@ -20,6 +25,7 @@ const PROJECT_PREFIX := "kimodo/"
 
 const EDITOR_DEFAULTS := {
 	"paths/models_dir": "user://kimodo_models",
+	"paths/output_dir": "user://kimodo_out",
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,
 	"runtime/text_layer_chunk": 8,
@@ -33,7 +39,6 @@ const PROJECT_DEFAULTS := {
 	"weights/motion_repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
 	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
 	"weights/revision": "main",
-	"output/root": "user://kimodo_out",
 	"output/library": "res://kimodo_clips.tres",
 	"generation/frames": 120,
 	"generation/steps": 30,
@@ -43,7 +48,6 @@ const PROJECT_DEFAULTS := {
 ## Shown in Project Settings, which is the only UI these get.
 const PROJECT_HINTS := {
 	"weights/revision": {"hint": PROPERTY_HINT_PLACEHOLDER_TEXT, "hint_string": "a branch, tag or commit"},
-	"output/root": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
 	"output/library": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
 	"generation/frames": {"hint": PROPERTY_HINT_RANGE, "hint_string": "16,600,1"},
 	"generation/steps": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,200,1"},
@@ -117,6 +121,11 @@ static func motion_gguf_path() -> String:
 
 static func text_bundle_path() -> String:
 	return String(editor_get("paths/models_dir")).path_join(TEXT_BUNDLE_RELATIVE)
+
+
+## Where generated takes land. One folder per generation underneath.
+static func output_dir() -> String:
+	return String(editor_get("paths/output_dir"))
 
 
 ## Everything the child process reads from its environment. OS.create_process()

@@ -135,8 +135,8 @@ Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
 right. It generates a clip, or loads an OUT_DIR that already exists, bakes it
 onto the selected `Skeleton3D`, and saves the result.
 
-A folded **Setup** pane holds the weight download and the runtime knobs, and
-opens itself whenever a file it configures is missing. "Missing" means any of
+A folded **Setup** pane holds the two folder paths, the weight download and the
+runtime knobs, and opens itself whenever a file it configures is missing. "Missing" means any of
 the 36 files `llm_text_encoder::load()` asks for, so a download that stopped
 halfway opens the pane rather than passing for complete. The state is on the
 presence line inside the pane and on the pane's own tooltip, so the question
@@ -201,7 +201,7 @@ the facing side, because a grey figure cannot show a mirrored clip.
 The preview falls back to procedural capsules when the file is not there, so
 stripping it out leaves the addon working.
 
-**Motion** lists every generation under `kimodo/output/root`, newest first.
+**Motion** lists every generation under the output directory, newest first.
 Picking one is what Target and Save then work on, so an older take can be
 revisited without hunting for its folder. `Load folder...` still reads an
 OUT_DIR from anywhere else.
@@ -268,13 +268,18 @@ by hand if the output has to match the reference.
 ### Where each setting lives
 
 **Editor settings** (`kimodo/`, per machine, never in version control) hold what
-is true of this machine: where `kmd-generate` and the multi-gigabyte weights sit,
-what this GPU and CPU can take, and a personal access token.
+is true of this machine: where the multi-gigabyte weights sit and where
+generated takes go, what this GPU and CPU can take, and a personal access token.
 
 **Project settings** (`kimodo/`, committed in `project.godot`) hold what the
-project agrees on: which repositories to fetch and at which revision, where
-generated output and the shared `AnimationLibrary` live, the house defaults for
-frames and steps, and the project's `BoneMap`.
+project agrees on: which repositories to fetch and at which revision, where the
+shared `AnimationLibrary` lives, the house defaults for frames and steps, and
+the project's `BoneMap`.
+
+The test is whether two people on one project want the same answer. Somewhere to
+put gigabytes of generated takes is not that, so the output folder is an editor
+setting rather than a project one: pointing it at another drive is nobody else's
+business and must not show up as a change to a tracked file.
 
 The prompt and the seed live in neither. They belong to one invocation.
 
