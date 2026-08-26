@@ -72,7 +72,7 @@ humanoid rig the result can drive.
 They share the one text encoder, so switching models re-downloads about 1 GiB
 and nothing else.
 
-SOMA and G1 download like anything else: press **Download**. They are under the
+SOMA and G1 download like anything else: click **Download**. They are under the
 [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
 which allows the conversion to be redistributed.
 
@@ -195,13 +195,13 @@ give the rules:
 
 - **Start with the subject.** `A person...`, `An old person...`, `A zombie...`.
 - **One behaviour, or two.** More than that blurs what the motion is meant to be.
-- **Aim for the middle.** `A person walks.` is too short and vague to steer
-  anything, and a list of what each limb does is too far the other way.
-- **Stay inside what it knows:** locomotion, gestures, everyday activities,
-  common object interactions, videogame combat, dancing, and the styles tired,
-  angry, happy, sad, scared, drunk, injured, stealthy, old and childlike.
-  `A baseball player walks up to the plate and swings a bat` fails because
-  nothing in the data is baseball.
+- **Aim for the middle.** `A person walks.` is too short to steer anything. A
+  list of what each limb does is too far the other way.
+- **Stay inside what it was trained on.** That is locomotion, gestures,
+  everyday activities, common object interactions, videogame combat, and
+  dancing. The styles are tired, angry, happy, sad, scared, drunk, injured,
+  stealthy, old, and childlike. `A baseball player walks up to the plate and
+  swings a bat` fails because nothing in the data is baseball.
 - **Neutral, physical terms.** The model card asks for
   `A person walks slowly with shuffled steps` rather than a description of who
   the person is.
@@ -215,13 +215,15 @@ So this:
 A person runs forward and then leaps over an obstacle in front of them.
 ```
 
-rather than `running`. One bare word conditions almost nothing, and what fills
-the gap is the training set itself: 700 hours of professional and stunt
-capture, in which combat is one of the categories. A run generated from one
-word can end in a two-handed weapon carry and a turn to check behind, which is
-a staple of a game animation library and not something anybody asked for. There is no prop, either. SMPL-X is 22 body joints with no hands, so what
-is actually there is the arm and torso configuration those clips hold, and the
-gun is your own eye finishing the picture.
+rather than `running`. A single word steers almost nothing. What fills the gap
+is the training set itself: 700 hours of professional and stunt capture, with
+combat among its categories. A run generated from one word can end in a
+two-handed weapon carry and a turn to check behind. That is a staple of a game
+animation library, and nothing in the prompt asked for it.
+
+No prop is drawn. SMPL-X is 22 body joints with no hands, so what the clip
+holds is an arm and torso configuration. Nothing in the data is a weapon; the
+shape of the arms is what suggests one.
 
 **Frames** is the length at 30 fps. Three limits apply and only the last of
 them is about quality:
@@ -230,23 +232,22 @@ them is about quality:
 |---|---|---|
 | the field | 16 to 600 | what the dock accepts |
 | kimodo.cpp | 1 to 10,000 alone, 2 to 300 in a sequence | what the generator accepts |
-| the model | **300** | ten seconds, the longest it was trained on |
+| the model | **300** | 10 seconds, the longest it was trained on |
 
-Past 300 there is nothing left for the model to draw on and the tail of the
-clip wanders, which looks the same as a prompt that ran out of things to say.
-Keep the length near what the sentence actually describes.
+Past 300 the model has nothing left to draw on, and the tail of the clip
+wanders. That looks the same as a prompt that ran out of things to say. Keep
+the length near what the sentence describes.
 
 **Steps** is how many denoising passes the sampler makes. More of them means a
-more converged sample and closer adherence to the text, and costs close to
-linearly in time. The default is 150 and the field goes to 200; kimodo.cpp's
-own demo asks for 100. Down in the tens is where a prompt stops being followed
-at all.
+more converged sample and closer adherence to the text. The cost in time is
+close to linear. The default is 150 and the field goes to 200; kimodo.cpp's own
+demo asks for 100. Down in the tens is where a prompt stops being followed at
+all.
 
-**Seed** picks which sample you get. The same prompt, length and step count
-with the same seed give the same clip every time, so changing the seed is how
-to ask for another take of one instruction rather than a different one. It is
-stored nowhere and starts at 0 each session, because it belongs to a single
-invocation.
+**Seed** picks which sample you get. One prompt, length, step count, and seed
+give the same clip every time. Change the seed to ask for another take of the
+same instruction rather than a different instruction. It is stored nowhere and
+starts at 0 each session, because it belongs to a single invocation.
 
 **+ Add prompt** carries the clip on into another prompt, up to 16 of them:
 `A person walks forward.`, then `A person sits down.`, then `A person waves.`,
