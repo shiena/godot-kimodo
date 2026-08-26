@@ -259,8 +259,11 @@ func _build_save() -> void:
 			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
 	# Bake and Save clip used to answer on the Generate line, three sections
 	# up and usually scrolled out of sight, which made a refusal look like a
-	# button that did nothing.
+	# button that did nothing. It carries a resting line the way Motion does:
+	# an empty Label has no height, so the answer would arrive somewhere that
+	# was not there a moment ago.
 	_save_label = _message(_body, 2)
+	_save_label.text = "Nothing saved yet."
 
 
 ## Both of these are gigabytes of files nobody commits, and both are a personal
