@@ -1010,7 +1010,39 @@ func _bake() -> Animation:
 	return animation
 
 
+## The clip name becomes a key in an AnimationLibrary and the stem of a file,
+## and the two forbid different characters: a library refuses , and [ which a
+## file name takes, and a file name refuses * ? | " which a library takes. So
+## it has to pass both. Empty on refusal, having said why.
+const ANIMATION_NAME_BANNED := "/:,["
+
+
+func _clip_stem() -> String:
+	var name := _clip_name.text.strip_edges()
+	if name.is_empty():
+		_set_message(_save_label, "Name the clip first.")
+		return ""
+	for character in ANIMATION_NAME_BANNED:
+		if name.contains(character):
+			_set_message(_save_label, "An animation cannot be called %s. None of %s is allowed." % [
+					name, ANIMATION_NAME_BANNED])
+			return ""
+	# validate_filename() sanitises rather than judges, so a difference is both
+	# the answer and the suggestion.
+	var as_file := name.validate_filename()
+	if as_file != name:
+		_set_message(_save_label, "%s is not a usable file name. Try %s." % [name, as_file])
+		return ""
+	return name
+
+
 func _on_apply() -> void:
+	# Checked before baking: a name the library will refuse makes the work
+	# pointless, and the refusal used to arrive as a console error under a
+	# status line claiming it had worked.
+	var name := _clip_stem()
+	if name.is_empty():
+		return
 	var animation := _bake()
 	if animation == null:
 		return
@@ -1035,12 +1067,12 @@ func _on_apply() -> void:
 			player.stop()
 		player.remove_animation_library(library_name)
 	var library := AnimationLibrary.new()
-	library.add_animation(StringName(_clip_name.text), animation)
+	library.add_animation(StringName(name), animation)
 	player.add_animation_library(library_name, library)
 
 	EditorInterface.get_selection().clear()
 	EditorInterface.get_selection().add_node(player)
-	_set_message(_save_label, "Baked into %s as kimodo/%s." % [player.name, _clip_name.text])
+	_set_message(_save_label, "Baked into %s as kimodo/%s." % [player.name, name])
 	_refresh_target()
 
 
@@ -1058,10 +1090,13 @@ func _find_player(node: Node) -> AnimationPlayer:
 
 
 func _on_save_clip() -> void:
+	var name := _clip_stem()
+	if name.is_empty():
+		return
 	var animation := _bake()
 	if animation == null:
 		return
-	_save_dialog("res://%s.tres" % _clip_name.text, _write_clip.bind(animation))
+	_save_dialog("res://%s.tres" % name, _write_clip.bind(animation))
 
 
 func _write_clip(path: String, animation: Animation) -> void:
