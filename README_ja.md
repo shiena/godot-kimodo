@@ -16,6 +16,10 @@ Kimodo が出力するのは、XYZW 順の親ローカル四元数と、メー�
 フレームレートは 30 fps です。
 いずれも Godot の流儀と一致するため、作業の中心は形式の変換ではなくリターゲットになります。
 
+エディターで動かしている様子です。
+
+[![kimodo.cpp integrated godot engine](https://img.youtube.com/vi/79CiinR9L58/maxresdefault.jpg)](https://youtu.be/79CiinR9L58)
+
 ## 動作条件
 
 条件を決めているのはアドオンではなくモデルです。

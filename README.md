@@ -18,6 +18,10 @@ Kimodo emits parent-local quaternions in XYZW order, a root translation in
 metres, and 30 frames per second. All three match Godot's own conventions, which
 is why the bulk of the work is retargeting rather than conversion.
 
+The addon running in the editor:
+
+[![kimodo.cpp integrated godot engine](https://img.youtube.com/vi/79CiinR9L58/maxresdefault.jpg)](https://youtu.be/79CiinR9L58)
+
 ## Requirements
 
 The model sets the bar, not the addon.
