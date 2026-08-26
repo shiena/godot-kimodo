@@ -25,6 +25,7 @@ Kimodo が出力するのは、XYZW 順の親ローカル四元数と、メー�
 | VRAM | 実用上 **2 GB**、下限は 1002 MiB | `token_embedding.weight` は 128,256 x 4096 の BF16 テンソル 1 つで 1,050,673,152 バイトあります。テンソルは複数のバッファに分割できないため、どの設定でもこれを下回れません |
 | Vulkan | **1.2** | ggml-vulkan がこれ未満では初期化しません |
 | プラットフォーム | x86_64 の Linux または Windows | kimodo.cpp が C++23 コンパイラーと GGML の Vulkan バックエンドを必要とするため、モバイルと Web は対象外です |
+| Python | **3.9** 以降、または `uv` | SMPL-X の変換にだけ、それも一度だけ必要です。コンバーターは標準ライブラリー以外を import しないため、uv は依存解決ではなく Python のない環境への手段です |
 | Godot | **4.4** 以降 | 拡張が `compatibility_minimum` として宣言している値であり、ビルドに使う godot-cpp のブランチでもあります。開発は 4.7 で行っています |
 
 上の数値はいずれもピーク値であり、足し合わせた値ではありません。
@@ -75,38 +76,24 @@ SOMA と G1 は **Download** でそのまま取得できます。
 
 SMPL-X のチェックポイントを自分で変換することは認められています。
 変換結果を再配布することは認められていません。
-変換ツールは `kimodo.cpp` サブモジュールにあります。
-実行には Nix と Hugging Face のアカウントが必要です。
-また [nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1) はライセンスに同意したアカウントだけがダウンロードできます。
+そのため Setup ペインの **Convert SMPL-X...** が、この作業を手元で実行します。
 
-**Model directory** には `user://` 形式のパスを指定でき、デフォルト値もこの形式です。
-シェルからは書き込めないため、変換を始める前に **Browse** で通常のディレクトリを指定します。
+1. SMPL-X を選んだ状態で **Model page** をクリックします。
+   ゲートのかかった [nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1) が開きます。
+   ここでライセンスに同意し、[Settings > Access Tokens](https://huggingface.co/settings/tokens) でトークンを発行します。
+   この手順だけはアドオンが代わりに行えません。
+2. 発行したトークンをトークン欄に貼り付けます。
+3. **Convert SMPL-X...** をクリックします。
+   1.05 GiB のチェックポイントを取得し、固定したリビジョンを記録し、コンバーターを実行します。
+   作業中はディスクを 2.1 GiB ほど使います。
+   このうち半分はチェックポイントで、変換後は削除できます。
 
-1. Hugging Face にログインします。
+コンバーターは kimodo.cpp 自身の `convert_motion_to_gguf.py` です。
+GDScript で書き直すのではなく、ビルド時に `addons/kimodo/scripts/` へコピーしています。
+上流がレビューしているパーサーであり、標準ライブラリー以外を import せず、バイナリー形式の読み取りを二重に持てば間違える箇所も二重になるためです。
+アドオンは `PATH` 上の Python で実行し、Python のない環境では `uv run --no-project --python 3.12` にフォールバックします。
 
-   ```sh
-   cd kimodo.cpp
-   nix develop path:. --command hf auth login
-   ```
-
-2. チェックポイントをダウンロードします。
-   サイズは 1.05 GiB で、アドオンが取得する 14.14 GiB とは別に必要です。
-
-   ```sh
-   nix develop path:. --command scripts/download_weights.sh --output "$PWD/models"
-   ```
-
-3. **Model directory** 配下に変換します。
-   `<MODEL_DIRECTORY>` は **Model directory** に設定したパスに置き換えます。
-
-   ```sh
-   nix develop path:. --command python scripts/convert_motion_to_gguf.py \
-     --input models/Kimodo-SMPLX-RP-v1 \
-     --output <MODEL_DIRECTORY>/models/kimodo-smplx-rp-v1-f32.gguf
-   ```
-
-変換が終わったら **Setup** ペインを開きます。
-ペインは開くたびにファイルを確認するため、presence 行が 36 ファイル揃った表示に変わります。
+完了すると presence 行が更新され、36 ファイル揃った表示になります。
 
 生成したクリップは骨格の名前を持ちません。
 ヘッダーのない float の配列が 2 つあるだけです。
@@ -156,13 +143,23 @@ SMPL-X のチェックポイントを自分で変換することは認められ�
 ペインの他の項目はこの選択に従います。
 ディスク上に必要な GGUF、その取得元リポジトリ、**Preview** でリグの代わりに立つマネキンの 3 つです。
 
+**Convert SMPL-X...** は、誰も公開できないモデルのときだけ有効になります。
+他の 2 つでは無効になり、その理由をツールチップに表示します。
+**Model page** は選択中のモデルの Hugging Face ページを開きます。
+SMPL-X の場合、ここがライセンスに同意する場所です。
+
 **Weights** は、設定したリポジトリからモデルファイルを取得します。
 取得したファイルはすべてマニフェストと照合します。
 マニフェストを返さないリポジトリがあっても、失われるのはそのリポジトリのファイルだけです。
 SMPL-X の GGUF を取得できない状態でもテキストバンドルをダウンロードできるのは、このためです。
 公開されているリポジトリはいずれもアクセストークンを必要としません。
-トークンの入力欄は、自分で用意した認証付きミラーを使う場合のためにあります。
+トークンの入力欄は、自分で用意した認証付きミラーを使う場合と、誰にとってもゲートのかかった SMPL-X のチェックポイントのためにあります。
 Editor Settings の **Motion repo** を設定すると、選択中のモデルの公開リポジトリを上書きできます。
+
+チェックポイント側はハッシュを公開していません。
+照合できるのは Hugging Face が報告するサイズと curl の転送そのものだけです。
+実際に読み取った SHA-256 は変換時に GGUF へ記録されます。
+これが正直な置き場所です。
 
 ダウンロードは既存のファイルを残すため、中断した取得を再開し、破損したファイルを修復します。
 36 ファイルが揃った状態でクリックすると、確認ダイアログが表示され、実行内容を提示します。
@@ -376,6 +373,10 @@ scons
 そのため `addons/kimodo` が、リリースの内容のすべてであり、プロジェクトにコピーする対象のすべてでもあります。
 ドックは GDScript のため、ドック自体のビルドは不要です。
 
+同じ実行で、kimodo.cpp の `convert_motion_to_gguf.py` を `project/addons/kimodo/scripts/` にコピーします。
+これも `bin/` もリポジトリには含めません。
+配布されるコピーが、固定した submodule のリビジョンのものになり、二重管理が発生しないためです。
+
 リリースするライブラリーは単精度のみです。
 倍精度の Godot を使う場合は `scons precision=double` でビルドし、対応する行を `.gdextension` に追加してください。
 
@@ -435,7 +436,9 @@ MSVC を選ぶ理由は 3 つあります。
 
 `ci.yml` は push のたびに両方のターゲットをビルドします。
 `make_build.yml` はバージョン番号を指定して手動で実行します。
-両方の target type をビルドし、4 つのライブラリーを収めた `addons/kimodo` を組み立て、GitHub のリリースに zip として公開します。
+両方の target type をビルドし、4 つのライブラリーと SMPL-X のコンバーターを収めた `addons/kimodo` を組み立て、GitHub のリリースに zip として公開します。
+コンバーターは Linux のリリースビルドから取ります。
+どのプラットフォームでも同じファイルであり、scons を実行しないと存在しないためです。
 コミットするのは `plugin.cfg` だけです。
 ビルドしたライブラリーはリポジトリに入れず、リリースの成果物として配布するためです。
 

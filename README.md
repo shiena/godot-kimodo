@@ -27,6 +27,7 @@ The model sets the bar, not the addon.
 | VRAM | **2 GB** in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128,256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers, so no setting gets under it |
 | Vulkan | **1.2** | ggml-vulkan refuses to initialise below it |
 | Platform | x86_64 Linux or Windows | kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, which rules out mobile and web |
+| Python | **3.9** or later, or `uv` | Only to convert SMPL-X, and only once. The converter imports nothing outside the standard library, so uv is the answer for a machine with no Python rather than a dependency resolver |
 | Godot | **4.4** or later | What the extension declares as its `compatibility_minimum`, and the godot-cpp branch it is built against. Development happens on 4.7 |
 
 Those figures are peaks, not a sum. The text encoder frees the token embedding
@@ -77,40 +78,27 @@ nothing else, so **Download** leaves that GGUF missing however many times you
 press it.
 
 Converting the SMPL-X checkpoint for yourself is allowed; publishing the result
-is not. The converter is in the `kimodo.cpp` submodule. It needs Nix, a Hugging
-Face account, and the licence accepted on
-[nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1),
-which is gated.
+is not, so **Convert SMPL-X...** in the Setup pane does it on your machine.
 
-**Model directory** accepts a `user://` path, and the default is one. A shell
-cannot write to that, so point the field at an ordinary directory with
-**Browse** before you start.
+1. Click **Model page** with SMPL-X selected. It opens
+   [nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1),
+   which is gated. Accept the licence there and mint a token under
+   [Settings > Access Tokens](https://huggingface.co/settings/tokens). Nothing
+   in the addon can do this part for you.
+2. Paste the token into the token field.
+3. Click **Convert SMPL-X...**. It fetches the 1.05 GiB checkpoint, writes the
+   revision it pinned, and runs the converter on it. Expect about 2.1 GiB of
+   disk while it works, half of which is the checkpoint you can delete
+   afterwards.
 
-1. Sign in to Hugging Face.
+The converter is kimodo.cpp's own `convert_motion_to_gguf.py`, copied into
+`addons/kimodo/scripts/` by the build rather than rewritten in GDScript: it is
+the parser upstream reviews, it imports nothing outside the standard library,
+and a second reader of a binary format is a second thing to get wrong. The
+addon runs it with whatever Python is on `PATH`, and falls back to
+`uv run --no-project --python 3.12` on a machine that has none.
 
-   ```sh
-   cd kimodo.cpp
-   nix develop path:. --command hf auth login
-   ```
-
-2. Download the checkpoint. It is 1.05 GiB, on top of the 14.14 GiB the addon
-   fetches.
-
-   ```sh
-   nix develop path:. --command scripts/download_weights.sh --output "$PWD/models"
-   ```
-
-3. Convert it into the **Model directory**, replacing `<MODEL_DIRECTORY>` with
-   the path in that field.
-
-   ```sh
-   nix develop path:. --command python scripts/convert_motion_to_gguf.py \
-     --input models/Kimodo-SMPLX-RP-v1 \
-     --output <MODEL_DIRECTORY>/models/kimodo-smplx-rp-v1-f32.gguf
-   ```
-
-Open the **Setup** pane afterwards. It re-checks the files every time it
-opens, and the presence line reads all 36 files.
+The presence line updates when it finishes, and reads all 36 files.
 
 A clip names no skeleton: it is two headerless buffers of floats. The addon
 recognises which model produced one from its width, since 22, 30 and 34 joints
@@ -159,13 +147,22 @@ project.
 else in the pane follows it: which GGUF has to be on disk, which repository
 serves it, and which mannequin stands in for the rig in **Preview**.
 
+**Convert SMPL-X...** is enabled only for the model nobody may publish, and
+says so on the other two. **Model page** opens whichever model is selected on
+Hugging Face, which for SMPL-X is where the licence has to be accepted.
+
 **Weights** fetches the configured repositories and checks every file against
 their manifests. A repository that will not serve its manifest costs its own
 files and no others, which is what leaves the text bundle downloadable while
 the SMPL-X GGUF is not. No published repository needs an access token; the
-field is there for a gated mirror of your own. Setting **Motion repo** in
-Editor Settings overrides the published repository for whichever model is
-picked.
+field is there for a gated mirror of your own, and for the SMPL-X checkpoint,
+which is gated for everyone. Setting **Motion repo** in Editor Settings
+overrides the published repository for whichever model is picked.
+
+The checkpoint publishes no hashes, so there is nothing to verify it against
+beyond the size Hugging Face reports and curl's own transfer. The conversion
+records the SHA-256 it actually read into the GGUF, which is the honest place
+for it.
 
 Downloading keeps whatever is already on disk, so it resumes an interrupted
 fetch and repairs a damaged one. Clicking it when all 36 files are present asks
@@ -384,6 +381,11 @@ the addon folder, so `addons/kimodo` is both the whole of a release and the
 whole of what anyone copies into a project. The dock is GDScript and needs no
 build of its own.
 
+The same run copies kimodo.cpp's `convert_motion_to_gguf.py` into
+`project/addons/kimodo/scripts/`. Neither that nor `bin/` is committed: the
+copy that ships belongs to the pinned submodule revision, so there is no second
+version of either to keep in step.
+
 The released libraries are single precision. For a double-precision Godot,
 build with `scons precision=double` and add the matching entries to the
 `.gdextension`.
@@ -443,7 +445,9 @@ Vulkan SDK, which both sides need for `glslc`.
 
 `ci.yml` builds both targets on every push. `make_build.yml` is run by hand with
 a version number. It builds both target types, assembles `addons/kimodo` with
-all four libraries in it, and publishes that as a zip on a GitHub release. It
+all four libraries and the SMPL-X converter in it, and publishes that as a zip
+on a GitHub release. The converter comes from the Linux release build, since it
+is the same file on every platform and only exists after scons has run. It
 commits `plugin.cfg` and nothing else, since built libraries stay out of the
 repository and reach people through the release asset.
 
