@@ -59,7 +59,10 @@ library = env.SharedLibrary(
     source=sources,
 )
 
-copy = env.Install("{}/bin/{}/".format(projectdir, env["platform"]), library)
+# Installed inside the addon rather than beside the project, so that
+# addons/kimodo is the whole of what a release ships and what someone copies
+# into a project of their own.
+copy = env.Install("{}/addons/{}/bin/{}/".format(projectdir, addonname, env["platform"]), library)
 
 default_args = [library, copy]
 
@@ -69,7 +72,7 @@ default_args = [library, copy]
 # without it for anything that reads a motion kmd-generate already wrote.
 Help("kimodo_native=yes|no: build kmd-generate from kimodo.cpp and bundle it (default yes)")
 if ARGUMENTS.get("kimodo_native", "yes") not in ("no", "false", "0"):
-    blockers = kimodo_native_blockers()
+    blockers = kimodo_native_blockers(env)
     if blockers:
         print_warning("Not building kmd-generate. Missing: " + "; ".join(blockers))
     else:

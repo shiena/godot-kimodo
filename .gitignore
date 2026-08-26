@@ -5,11 +5,9 @@
 # GodotHub records which engine it launched this project with
 .godotrc
 
-# Ignore library files but not the gdextension file
+# Ignore built libraries. The .gdextension that describes them is tracked, and
+# lives in the addon next to the bin/ it points at.
 /bin/**
-/project/bin/**
-!/project/bin/*.gdextension
-!/project/bin/*.gdextension.uid
 
 # Ignore generated motion: the sample fixture, a real clip kept for checking
 # against, and whatever kimodo/output/root points at inside the project
@@ -17,7 +15,8 @@
 /project/motion_real/
 /project/kimodo_out/
 
-# Ignore kmd-generate and the shared libraries scons bundles with the addon
+# Ignore what scons puts in the addon: the extension, kmd-generate and the
+# shared libraries they load
 /project/addons/kimodo/bin/
 
 # Ignore scons database
