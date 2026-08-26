@@ -1,29 +1,249 @@
 # godot-kimodo
 
-A Godot 4 GDExtension that brings [kimodo.cpp](https://github.com/localai-org/kimodo.cpp)
-text-to-motion output into Godot as `Animation` resources.
+Type a sentence, get an `Animation` on your rig.
 
-Kimodo generates SMPL-X 22 motion: parent-local quaternions in XYZW order and a
-root translation in meters. All three of those conventions match Godot, so the
-mapping onto a `Skeleton3D` and an `Animation` is close to one-to-one. See
-[GODOT_INTEGRATION.md](GODOT_INTEGRATION.md) for the full analysis (in Japanese).
+This is a Godot 4 editor addon around [kimodo.cpp](https://github.com/localai-org/kimodo.cpp),
+which turns text into SMPL-X motion. The addon runs the generator, retargets
+what comes back onto a `Skeleton3D`, and saves it as an ordinary Godot
+`Animation` that has nothing to do with Kimodo afterwards.
 
-## Status
+Kimodo emits parent-local quaternions in XYZW order and a root translation in
+metres, at 30 fps. All three conventions match Godot, so the mapping onto a
+`Skeleton3D` is close to one-to-one and the retargeting stage is what does the
+real work.
 
-The whole path is in place: read a clip, retarget it onto a rig, preview it,
-save it. What is not confirmed is the part only generated output can settle --
-whether the real model agrees with the coordinate system, the left/right
-assignment and the facing axis assumed here. The checks below run against a
-synthetic clip, so they prove the wiring and nothing about the model.
+Everything happens in the editor. Nothing here ships in an export: what ships is
+the `Animation` resource you saved.
 
-Generation runs `kmd-generate` as a separate process rather than through the
-GDExtension. The text encoder is an 8B LLM2Vec, and sharing the editor's Vulkan
-device with it means competing for VRAM and taking the editor down with a failed
-generation. `_spawn_generator()` in the dock is the only place that knows how
-generation is invoked, so linking kimodo.cpp directly later is a contained
-change.
+## Before you start
 
-## Classes
+This is not a small dependency. The model is the hard requirement, not the
+addon:
+
+| | Needs | Why |
+|---|---|---|
+| Disk | **15.2 GiB** | 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, across 36 files |
+| VRAM | **2 GB** in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers. No chunk size gets under it |
+| Vulkan | **1.2** | ggml-vulkan refuses to initialise below it |
+| Platform | x86_64 Linux or Windows | kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, which rules out mobile and web |
+| Godot | 4.4 or later | `compatibility_minimum` in the `.gdextension` |
+
+Those peaks do not add up: `encode()` frees the token embedding before the layer
+loop, frees each layer chunk before the next, and the motion weights only load
+once the text encoder is done with the prompt.
+
+Without a Vulkan device the run falls back to the CPU, and the same figures move
+from VRAM to RAM. There is no way to require the GPU, and nothing announces the
+fallback.
+
+## Install
+
+Take `godot-kimodo-vX.Y.Z.zip` from the
+[releases](https://github.com/shiena/godot-kimodo/releases), and copy the
+`addons/kimodo` inside it into your project's `addons/`. The archive carries the
+libraries for both platforms, so the same zip serves either. Then enable
+**Kimodo** under Project Settings > Plugins and the dock appears on the right.
+
+To build it yourself instead, see [Building](#building).
+
+The weights are not in the archive. The addon fetches them on first use; see
+[Setup](#setup) below.
+
+## Using the dock
+
+The dock is one column, read top to bottom: **Setup**, **Generate**, **Motion**,
+**Target**, **Save**, **Preview**. Each section answers on a line of its own, so
+a refusal appears next to the button that refused.
+
+### Setup
+
+Folded away most of the time, and opened by the addon whenever a file it
+configures is missing. "Missing" means any of the 36 files
+`llm_text_encoder::load()` asks for, so a download that stopped halfway opens
+the pane rather than passing for complete. The state is on the presence line
+inside the pane and on the pane's own tooltip, so the question survives the pane
+being folded.
+
+**Folders** holds the two paths that fill up: where the weights sit and where
+generated takes go. Both are per machine.
+
+**Weights** fetches the two published repositories and verifies every file
+against the manifest, the same way kimodo.cpp's own
+`scripts/download_gguf_weights.sh` does. Neither repository needs an access
+token; the field is there for a gated mirror.
+
+Download keeps whatever is already in place, which makes it resume an
+interrupted fetch and repair a damaged one. Pressing it when all 36 files are
+there asks first, and says what it would actually do: compare sizes against the
+manifest and re-fetch only a mismatch, which normally transfers nothing but the
+two manifests. With **Re-hash existing** ticked it reads 15.2 GiB off disk to
+check the contents as well, and the question says that instead.
+
+The transfer runs through **curl**, the one external dependency the addon has.
+It ships with Windows 10 and later, macOS, and effectively every Linux
+distribution. curl is used rather than `HTTPRequest` because it resumes a
+partial file: over 15 GiB a dropped connection is a matter of when, not whether,
+and `HTTPRequest` would restart the file it was on.
+
+**Runtime** is the knobs described under [Runtime knobs](#runtime-knobs).
+
+There is no field for `kmd-generate`: the addon carries the copy it was built
+with, and a different one is a matter of replacing that file.
+
+### Generate
+
+Frames, steps and seed, then the prompt, then the button. `kmd-generate` runs as
+a separate process rather than through the GDExtension: the text encoder is an
+8B LLM2Vec, and sharing the editor's Vulkan device with it would mean competing
+for VRAM and taking the editor down with a failed generation.
+`_spawn_generator()` in the dock is the only place that knows how generation is
+invoked, so linking kimodo.cpp directly later is a contained change.
+
+`kmd-generate` takes seven positional arguments and nothing else, so the two
+classifier-free guidance weights it passes are fixed at 2.0. Exposing them would
+mean widening that command line first.
+
+### Motion
+
+Every generation under the output directory, newest first. Picking one is what
+Target and Save then work on, so an older take can be revisited without hunting
+for its folder, and **Open folder** shows it in the file manager. To work on
+takes that are somewhere else, point the output directory at them.
+
+A clip still called `gen_<stamp>` is labelled with its prompt. **Rename** gives
+the folder a name and the list shows that instead, which is the only way to tell
+two takes of one prompt apart. **Delete** sends the folder to the system trash
+rather than removing it, because a clip is minutes of GPU time and a list with a
+Delete button in it is a list someone will misclick.
+
+### Target
+
+Two questions, not two ways of answering one.
+
+**Skeleton** is the rig to bake onto, and is required. It is resolved when a
+button is pressed rather than stored: the selected `Skeleton3D`, or the first
+one in the open scene. The report below follows the selection on its own, so
+what it describes is what a bake would reach.
+
+**Bone map** is how that rig names its bones, and is only needed when they are
+not `SkeletonProfileHumanoid`'s names. The field overrides
+`kimodo/paths/bone_map` for one session and starts empty, showing that setting
+as its placeholder.
+
+A sample sits at `addons/kimodo/samples/smplx_bone_map.tres` and is what the
+setting starts at. It maps the humanoid profile onto SMPL-X joint names, which
+makes `KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as
+a worked example of the format. Regenerate it rather than editing it by hand:
+
+```sh
+godot --headless --path project -s res://tools/make_smplx_bone_map.gd
+```
+
+No map is shipped for Mixamo, VRM or any other rig, because getting one right
+means having that rig to check against. Godot fills that gap itself: select a
+`BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector
+offers auto-mapping against a skeleton.
+
+### Save
+
+Both buttons retarget onto the `Skeleton3D` that Target resolved and differ only
+in where the result goes. **Bake** puts it on an `AnimationPlayer` in the open
+scene; **Save clip** writes it as a standalone resource. Both name it after
+**Clip name**, which is checked against the two rules it has to meet: an
+`AnimationLibrary` refuses `,` and `[`, which a file name takes, and a file name
+refuses `*`, `?` and `|`, which a library takes.
+
+A saved file lands inside the project, so it is revealed in the FileSystem dock
+rather than in a file manager. Collecting clips into an `AnimationLibrary` is
+`KimodoLibrary`'s job from a script; the dock does not offer it.
+
+Both need a `Skeleton3D` in the open scene, because the animation's track paths
+are that skeleton's path within it. A scene with no rig in it answers `No
+Skeleton3D to bake onto.` on the line under the buttons.
+
+### Preview
+
+Plays whatever Motion has loaded, on a bundled mannequin rather than the target
+rig: the rig belongs to the edited scene and cannot be in two worlds at once.
+
+Click the viewport to take it, which puts an accent border round the frame. Only
+then do drag and wheel orbit and zoom; until then the wheel belongs to the dock
+scrolling under it. Escape hands it back, as does a click anywhere else. The
+slider scrubs whatever the state, and the grip underneath drags the viewport
+taller.
+
+The camera follows the root and the grid is world-fixed, so travel and ground
+contact both have something to read against.
+
+#### The mannequin
+
+`addons/kimodo/samples/kimodo_mannequin.glb` is 40 KB, 22 bones and 300
+triangles, generated by `scripts/make_mannequin.py`:
+
+```sh
+blender --background --python scripts/make_mannequin.py
+```
+
+The repository carries the recipe rather than a .blend, and the model is our own
+so nothing rides on somebody else's licence. Every humanoid within reach was
+wrong in some way: the Godot demo characters are either 24 MB or missing hands
+and shoulders, the GDQuest mannequin that Godot's ragdoll demo ships has an
+authored rest with folded legs and only two spine bones, and the Khronos test
+figures have no clavicles.
+
+It is dimensioned from the same SMPL-X rest the motion is decoded against, so it
+maps 22 of 22 at a scale of 1.0, its bones already carry
+`SkeletonProfileHumanoid` names, and it already stands on the floor. No BoneMap,
+no import-time rest fixing. Left limbs are warm and right cold with a nose on
+the facing side, because a grey figure cannot show a mirrored clip.
+
+The preview falls back to procedural capsules when the file is not there, so
+stripping it out leaves the addon working.
+
+## Settings
+
+All of them are editor settings, under `kimodo/` in Editor Settings, and none of
+them is in `project.godot`. The addon runs in the editor and never ships in an
+export, so nothing it configures has to reach a running game, while pointing the
+weights or the output at another drive is nobody else's business and must not
+arrive as a change to a tracked file.
+
+`Settings.register()` declares all fifteen when the plugin loads, so the Editor
+Settings dialog lists each one with a range, a file filter or an enum before the
+dock has written anything.
+
+The cost is that editor settings belong to the editor rather than to the
+project, so the one `res://` path among them, the `BoneMap`, carries into the
+next project opened with the same editor. `Settings.bone_map_path()` answers
+with the bundled sample when the stored path is not in this project, rather than
+hand the retargeter a file that will not open.
+
+The prompt and the seed live in neither. They belong to one invocation.
+
+### Runtime knobs
+
+kimodo.cpp reads three environment variables, and `OS.create_process()` takes no
+environment, so the dock sets them on the editor process and lets `kmd-generate`
+inherit them.
+
+| Setting | Variable | Effect |
+|---|---|---|
+| Text layers per chunk | `KIMODO_TEXT_LAYER_CHUNK` | 1 to 32, default 8. Fewer layers lowers peak VRAM and costs speed |
+| Backend | `KIMODO_BACKEND` | Only the exact string `cpu` does anything; everything else means "try Vulkan, fall back to CPU" |
+| CPU threads | `KIMODO_THREADS` | Only applies on the CPU backend; 0 leaves it to the machine |
+| GPU index | `GGML_VK_VISIBLE_DEVICES` | kimodo.cpp calls `ggml_backend_vk_init(0)`, so picking a GPU means reordering which one is device 0 |
+| Spill to system memory | `GGML_VK_ALLOW_SYSMEM_FALLBACK` | Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access |
+
+On Windows, `configure_vulkan_f32_parity()` in kimodo.cpp is compiled out. It is
+guarded by `#if defined(__unix__)`, so `GGML_VK_DISABLE_COOPMAT`,
+`GGML_VK_DISABLE_COOPMAT2` and `GGML_VK_DISABLE_F16` are not set and the
+cooperative-matrix path can convert the F32 reference weights to FP16. Set them
+by hand if the output has to match the reference.
+
+## The API
+
+The dock is GDScript over four classes, all of which are usable from a script of
+your own.
 
 `KimodoMotion` (`Resource`) holds one clip.
 
@@ -72,7 +292,18 @@ The rest offsets are not in the motion GGUF, so `src/smplx22.cpp` duplicates the
 table that `kimodo.cpp/demo/index.html` calibrated from the upstream fixture.
 Once the converter and the C API expose the rest pose, that table can go.
 
-## Build
+## Status
+
+The whole path works, and it has been run against real generated motion: the
+clip stands on the ground, and travel agrees with facing, which settles that
+Kimodo walks along +Z.
+
+What is still unconfirmed is **left against right**. The clip it was checked
+with barely swings its arms, so settling it takes a prompt that raises one named
+hand. The tests below cannot settle it either, because they run against a
+synthetic fixture.
+
+## Building
 
 Needs SCons, Python 3 and a C++17 toolchain. On Windows that means MSVC; on
 Linux, GCC or Clang.
@@ -87,6 +318,9 @@ The build writes `project/addons/kimodo/bin/<platform>/`, which is where
 addon so that `addons/kimodo` is the whole of what ships and the whole of what
 someone copies into a project of their own. The dock itself is GDScript, so it
 needs no build.
+
+Single precision only. A double-precision Godot is a build somebody made
+themselves, and they can run `scons precision=double` as easily.
 
 ### kmd-generate
 
@@ -111,6 +345,9 @@ developer command prompt is needed, and it finds the cmake that ships as a
 Visual Studio component rather than insisting on one on PATH. The result is
 about 55 MB, most of it the Vulkan shaders compiled into `ggml-vulkan.dll`.
 
+Each target gets its own tree under `kimodo.cpp/build/`, so builds for different
+platforms out of one checkout do not fight over a CMake cache.
+
 ### Patches
 
 kimodo.cpp's README documents a Linux build, and the pinned revision does not
@@ -127,19 +364,14 @@ Both belong upstream. `.gitmodules` marks kimodo.cpp `ignore = dirty` so the
 patched working tree does not show up as a change on every `git status`; the
 pinned revision is still what the submodule points at.
 
-Only x86_64 Linux and Windows are listed in the `.gdextension`, because those are
-the platforms kimodo.cpp itself supports: it needs a C++23 compiler and the GGML
-Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
-
 ### What CI does
 
 Each platform is built on its own runner with its own native toolchain:
 `ubuntu-24.04` with GCC, `windows-2022` with MSVC. Windows is not crossed from
 Linux, even though it would be one container and one Vulkan SDK to install.
-MSVC is what kimodo.cpp's `CMakeLists.txt` has a branch for, what the patches in
-`patches/` were written against, and what ggml's own CI uses for a Windows
-Vulkan build, so it is the configuration whose problems somebody else has
-already hit.
+MSVC is what kimodo.cpp's `CMakeLists.txt` has a branch for, what the patches
+above were written against, and what ggml's own CI uses for a Windows Vulkan
+build, so it is the configuration whose problems somebody else has already hit.
 
 `.github/actions/setup-build` installs the rest per platform: the LunarG apt
 repository on Linux, the LunarG installer on Windows, because both sides need
@@ -147,10 +379,8 @@ the `glslc` that compiles the GGML Vulkan shaders.
 
 Crossing is still possible by hand. Naming a CMake toolchain in
 `KIMODO_CMAKE_TOOLCHAIN` and appending to the configure line through
-`KIMODO_CMAKE_ARGS` is all the build needs, and each target gets its own tree
-under `kimodo.cpp/build/` so a native and a cross build of one checkout do not
-fight over a CMake cache. Nothing here is tested against that, though: the
-Vulkan loader has no mingw import library, and ggml-vulkan wants
+`KIMODO_CMAKE_ARGS` is all the build needs. Nothing here is tested against that,
+though: the Vulkan loader has no mingw import library, and ggml-vulkan wants
 `vkGetInstanceProcAddr` at link time even though it resolves the rest through
 `VULKAN_HPP_DISPATCH_LOADER_DYNAMIC` at runtime.
 
@@ -160,185 +390,7 @@ four libraries in it, and publishes that as a zip on a GitHub release. Only
 `plugin.cfg` is committed by it: built libraries stay out of the repository and
 reach people through the release asset.
 
-## The dock
-
-Enable **Kimodo** under Project Settings > Plugins and the dock appears on the
-right. It generates a clip, or loads an OUT_DIR that already exists, bakes it
-onto the selected `Skeleton3D`, and saves the result.
-
-A folded **Setup** pane holds the two folder paths, the weight download and the
-runtime knobs, and opens itself whenever a file it configures is missing. "Missing" means any of
-the 36 files `llm_text_encoder::load()` asks for, so a download that stopped
-halfway opens the pane rather than passing for complete. The state is on the
-presence line inside the pane and on the pane's own tooltip, so the question
-survives the pane being folded.
-
-Download keeps whatever is already in place, which makes it resume an
-interrupted fetch and repair a damaged one. Pressing it when all 36 files are
-there asks first, and says what it would actually do: compare sizes against the
-manifest and re-fetch only a mismatch, which normally transfers nothing but the
-two manifests. With **Re-hash existing** ticked it reads 15.2 GiB off disk to
-check the contents as well, and the question says that instead.
-
-There is no field for kmd-generate: the addon carries the copy `scons` built,
-and a different one is a matter of replacing that file.
-
-A sample `BoneMap` sits at `addons/kimodo/samples/smplx_bone_map.tres`, and
-`kimodo/paths/bone_map` starts there. The Target field is an override for one
-session and starts empty, showing that setting as its placeholder; `Find in scene`
-re-reads it. It maps the humanoid profile onto SMPL-X joint names, which makes
-`KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as a
-worked example of the format. Regenerate it rather than editing it by hand:
-
-```sh
-godot --headless --path project -s res://tools/make_smplx_bone_map.gd
-```
-
-Target asks two questions rather than offering two ways to answer one.
-**Skeleton** is the rig to bake onto and is required; **Bone map** is how that
-rig names its bones and is only needed when they are not the profile's names.
-Both are used on every bake.
-
-No map is shipped for Mixamo, VRM or any other rig, because getting one right
-means having that rig to check against. Godot fills that gap itself: select a
-`BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector
-offers auto-mapping against a skeleton.
-
-**Save** retargets onto the Skeleton3D that Target resolved, and differs only
-in where the result goes: **Bake** puts it on an `AnimationPlayer` in the open
-scene, **Save clip** writes it as a standalone resource. Both name it after
-**Clip name**. A saved file lands inside the project, so it is revealed in the
-FileSystem dock rather than in a file manager. Collecting clips into an
-`AnimationLibrary` is `KimodoLibrary`'s job from a script; the dock no longer
-offers it.
-
-Both need a Skeleton3D in the open scene, because the animation's track paths
-are that skeleton's path within it. A scene with no rig in it answers `No
-Skeleton3D to bake onto.` on the line under the buttons.
-
-**Preview** at the bottom plays whatever Motion has loaded, on a bundled
-mannequin rather than the target rig: the rig belongs to the edited scene and
-cannot be in two worlds at once. Click the viewport to take it, which puts an
-accent border round the frame; only then do drag and wheel orbit and zoom, and
-until then the wheel belongs to the dock scrolling under it. Escape hands it
-back, as does a click anywhere else: a button or a field takes the focus itself,
-and a press that lands on a label or the gap between two controls is caught by
-the dock. The slider scrubs whatever the state. The camera follows the root, and the grid is world-fixed, so travel and
-ground contact both have something to read against. The grip under the viewport
-drags it taller.
-
-### The mannequin
-
-`addons/kimodo/samples/kimodo_mannequin.glb` is 40 KB, 22 bones and 300
-triangles, generated by `scripts/make_mannequin.py`:
-
-```sh
-blender --background --python scripts/make_mannequin.py
-```
-
-The repository carries the recipe rather than a .blend, and the model is our own
-so nothing rides on somebody else's licence. Every humanoid within reach was
-wrong in some way: the Godot demo characters are either 24 MB or missing hands
-and shoulders, the GDQuest mannequin that Godot's ragdoll demo ships has an
-authored rest with folded legs and only two spine bones, and the Khronos test
-figures have no clavicles.
-
-It is dimensioned from the same SMPL-X rest the motion is decoded against, so it
-maps 22 of 22 at a scale of 1.0, its bones already carry
-`SkeletonProfileHumanoid` names, and it already stands on the floor. No BoneMap,
-no import-time rest fixing. Left limbs are warm and right cold with a nose on
-the facing side, because a grey figure cannot show a mirrored clip.
-
-The preview falls back to procedural capsules when the file is not there, so
-stripping it out leaves the addon working.
-
-**Motion** lists every generation under the output directory, newest first.
-Picking one is what Target and Save then work on, so an older take can be
-revisited without hunting for its folder, and `Open folder` shows it in the file
-manager. To work on takes that are somewhere else, point the output directory
-there: reading a single OUT_DIR into the dock left it loaded but unlisted, with
-Rename and Delete unable to reach it.
-
-A clip still called `gen_<stamp>` is labelled with its prompt; **Rename** gives
-the folder a name and the list shows that instead, which is the only way to tell
-two takes of one prompt apart. **Delete** sends the folder to the system trash
-rather than removing it, because a clip is minutes of GPU time and a list with a
-Delete button in it is a list someone will misclick.
-
-### Weights
-
-The Setup pane fetches both published repositories and verifies every file
-against the manifest the same way `scripts/download_gguf_weights.sh` does. That
-is 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, split across 36 files,
-and neither repository needs an access token.
-
-The transfer runs through **curl**, which is the one external dependency the
-addon has. It ships with Windows 10 and later, macOS, and effectively every
-Linux distribution. curl is used rather than `HTTPRequest` because it resumes a
-partial file: over 15 GiB a dropped connection is a matter of when, not whether,
-and `HTTPRequest` would restart the file it was on.
-
-### Runtime knobs
-
-kimodo.cpp reads three environment variables, and `OS.create_process()` takes no
-environment, so the dock sets them on the editor process and lets `kmd-generate`
-inherit them.
-
-| Setting | Variable | Effect |
-|---|---|---|
-| Text layers per chunk | `KIMODO_TEXT_LAYER_CHUNK` | 1 to 32, default 8. Fewer layers lowers peak VRAM and costs speed |
-| Backend | `KIMODO_BACKEND` | Only the exact string `cpu` does anything; everything else means "try Vulkan, fall back to CPU" |
-| CPU threads | `KIMODO_THREADS` | Only applies on the CPU backend; 0 leaves it to the machine |
-| GPU index | `GGML_VK_VISIBLE_DEVICES` | kimodo.cpp calls `ggml_backend_vk_init(0)`, so picking a GPU means reordering which one is device 0 |
-| Spill to system memory | `GGML_VK_ALLOW_SYSMEM_FALLBACK` | Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access |
-
-There is no way to require the GPU. When no Vulkan device answers, the run
-falls back to the CPU without saying so.
-
-`kmd-generate` takes seven positional arguments and nothing else, so the two
-classifier-free guidance weights it passes are fixed at 2.0. Exposing them would
-mean widening that command line first.
-
-### What it takes to run
-
-| | Requirement | Why |
-|---|---|---|
-| Disk | 15.2 GiB | The published bundle |
-| VRAM, Vulkan path | 2 GB in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers. No chunk size gets under it |
-| Vulkan | 1.2 | ggml-vulkan refuses to initialise below it |
-| RAM, CPU path | The same figures move from VRAM to RAM | The backend allocates from host memory instead |
-
-Those peaks do not add up: `encode()` frees the token embedding before the layer
-loop, frees each layer chunk before the next, and the motion weights only load
-once the text encoder is done with the prompt.
-
-On Windows, `configure_vulkan_f32_parity()` in kimodo.cpp is compiled out. It is
-guarded by `#if defined(__unix__)`, so `GGML_VK_DISABLE_COOPMAT`,
-`GGML_VK_DISABLE_COOPMAT2` and `GGML_VK_DISABLE_F16` are not set and the
-cooperative-matrix path can convert the F32 reference weights to FP16. Set them
-by hand if the output has to match the reference.
-
-### Where each setting lives
-
-All of them are editor settings, under `kimodo/` in Editor Settings, and none of
-them is in `project.godot`. The addon runs in the editor and never ships in an
-export, so nothing it configures has to reach a running game, while pointing the
-weights or the output at another drive is nobody else's business and must not
-arrive as a change to a tracked file.
-
-`Settings.register()` declares all fifteen when the plugin loads, so the Editor
-Settings dialog lists each one with a range, a file filter or an enum before the
-dock has written anything.
-
-The cost is that editor settings belong to the editor rather than to the
-project, so the one `res://` path among them, the `BoneMap`, carries into the
-next project opened with the same editor. `Settings.bone_map_path()` answers
-with the bundled sample when the stored path is not in this project, rather than
-hand the retargeter a file that will not open.
-
-The prompt and the seed live in neither. They belong to one invocation.
-
-## Preview scene
+### Preview scene
 
 `project/smplx_preview.tscn` plays a clip and reads out the things that have to
 be judged by eye: root position, both hands, the hips facing vector, and how
@@ -363,7 +415,7 @@ godot --path project -- --motion=/path/to/kmd-generate/out
 Drag to orbit, wheel to zoom, space to play or pause, left and right arrows to
 step a frame at a time.
 
-## Test
+### Test
 
 ```sh
 godot --headless --path project --import
