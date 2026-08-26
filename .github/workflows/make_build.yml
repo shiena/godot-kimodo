@@ -204,7 +204,14 @@ jobs:
           # Only plugin.cfg: built libraries stay out of the repository and
           # reach people through the release asset instead.
           git add project/addons/kimodo/plugin.cfg
-          git commit -m "Release v${VERSION}"
+          # Cutting a version whose tag was deleted leaves plugin.cfg already
+          # saying it, and git commit reports an empty staging area as a
+          # failure rather than as nothing to do.
+          if git diff --cached --quiet; then
+            echo "plugin.cfg already records ${VERSION}."
+          else
+            git commit -m "Release v${VERSION}"
+          fi
           git push origin "HEAD:${GITHUB_REF_NAME}"
           git tag "v${VERSION}"
           git push origin "v${VERSION}"
