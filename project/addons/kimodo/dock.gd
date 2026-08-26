@@ -136,6 +136,11 @@ func _ready() -> void:
 	_build_save()
 	_build_preview()
 
+	# Bake resolves the target afresh, so the report has to describe whatever
+	# is selected right now or the two disagree without saying so. Following
+	# the selection is cheaper than remembering a node that can be deleted.
+	EditorInterface.get_selection().selection_changed.connect(_refresh_target)
+
 	_on_bone_map_changed(_bone_map_path.text)
 	_refresh_presence()
 	_refresh_clips()
@@ -208,8 +213,8 @@ func _build_target() -> void:
 	bone_map_row.add_child(_bone_map_path)
 	bone_map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
 
-	_button(_body, "Use selection", _refresh_target,
-			"Retarget onto the selected Skeleton3D, or the first one in the open scene.")
+	_button(_body, "Find target", _refresh_target,
+			"Look again for the target: the selected Skeleton3D, or the first one in the open scene. The report follows the selection by itself.")
 
 	_target_label = RichTextLabel.new()
 	_target_label.bbcode_enabled = true
@@ -883,6 +888,12 @@ func _find_skeleton(node: Node) -> Skeleton3D:
 		if found != null:
 			return found
 	return null
+
+
+## The plugin's answer to the edited scene changing: the skeleton the report
+## describes may not be in the new scene at all.
+func refresh_target() -> void:
+	_refresh_target()
 
 
 func _refresh_target() -> void:

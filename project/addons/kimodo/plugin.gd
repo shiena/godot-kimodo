@@ -11,12 +11,20 @@ var _dock: Control
 
 
 func _enter_tree() -> void:
-	# Declared here rather than from the dock, so the project-side settings show
-	# up in Project Settings whether or not anyone opens the panel.
+	# Declared here rather than from the dock, so the settings are listed in
+	# Editor Settings whether or not anyone opens the panel.
 	Settings.register()
 
 	_dock = KimodoDock.new()
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _dock)
+	# Selection changes reach the dock on their own. Opening another scene does
+	# not, and it can take the target skeleton with it.
+	scene_changed.connect(_on_scene_changed)
+
+
+func _on_scene_changed(_root: Node) -> void:
+	if is_instance_valid(_dock):
+		_dock.refresh_target()
 
 
 func _exit_tree() -> void:
