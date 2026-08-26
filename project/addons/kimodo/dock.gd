@@ -145,6 +145,11 @@ func _ready() -> void:
 	# is selected right now or the two disagree without saying so. Following
 	# the selection is cheaper than remembering a node that can be deleted.
 	EditorInterface.get_selection().selection_changed.connect(_refresh_target)
+	# Buttons and fields take the focus off the preview by taking it themselves.
+	# Labels and the gaps between controls do not, so the dock listens for a
+	# press that lands on nothing and hands it back.
+	gui_input.connect(_on_dock_input)
+	_body.gui_input.connect(_on_dock_input)
 
 	_on_bone_map_changed(_bone_map_path.text)
 	_refresh_presence()
@@ -1051,7 +1056,7 @@ func _build_preview() -> void:
 	# A ScrollContainer hands every child its minimum height and scrolls the
 	# rest, so expanding does nothing here and the number below is the height.
 	_preview_container.custom_minimum_size = Vector2(0.0, float(Settings.get_value("preview/height")))
-	_preview_container.tooltip_text = "Click to take the preview, then drag to orbit and wheel to zoom. Until then the wheel scrolls the dock."
+	_preview_container.tooltip_text = "Click to take the preview, then drag to orbit and wheel to zoom. Until then the wheel scrolls the dock. Escape or a click outside lets it go."
 	# Focus rather than a flag of our own: clicking anything else in the editor
 	# hands it back without this having to watch for it.
 	_preview_container.focus_mode = Control.FOCUS_CLICK
@@ -1295,6 +1300,11 @@ func _on_preview_scrubbed(value: float) -> void:
 	_preview_time = value * maxf(0.001, _motion.get_duration() if _motion != null else 1.0)
 
 
+func _on_dock_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and _preview_container.has_focus():
+		_preview_container.release_focus()
+
+
 ## A border in the editor accent while the preview holds focus, and a hairline
 ## the rest of the time. Two states of the same box rather than one appearing:
 ## a frame that comes and goes moves everything under it by its own width.
@@ -1319,6 +1329,11 @@ func _on_preview_input(event: InputEvent) -> void:
 		# takes the preview is also the first frame of a drag.
 		_preview_container.grab_focus()
 	if not _preview_container.has_focus():
+		return
+	# The way out that needs no target to click on.
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_preview_container.release_focus()
+		_preview_container.accept_event()
 		return
 
 	if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):

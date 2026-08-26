@@ -178,8 +178,10 @@ from a script; the dock no longer offers it.
 mannequin rather than the target rig: the rig belongs to the edited scene and
 cannot be in two worlds at once. Click the viewport to take it, which puts an
 accent border round the frame; only then do drag and wheel orbit and zoom, and
-until then the wheel belongs to the dock scrolling under it. Clicking anything
-else in the editor hands it back. The slider scrubs whatever the state. The camera follows the root, and the grid is world-fixed, so travel and
+until then the wheel belongs to the dock scrolling under it. Escape hands it
+back, as does a click anywhere else: a button or a field takes the focus itself,
+and a press that lands on a label or the gap between two controls is caught by
+the dock. The slider scrubs whatever the state. The camera follows the root, and the grid is world-fixed, so travel and
 ground contact both have something to read against. The grip under the viewport
 drags it taller.
 
