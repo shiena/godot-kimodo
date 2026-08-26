@@ -58,12 +58,18 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 		return "curl was not found on PATH. It ships with Windows 10 and later, macOS and most Linux distributions."
 
 	var work := []
+	# A repository that will not hand over its manifest costs its own files and
+	# no others. Returning here instead would mean one withdrawn publication
+	# holds back the gigabytes the rest of them still serve, and the person
+	# waiting on those gigabytes can do nothing about the withdrawal.
+	var refused := PackedStringArray()
 	for spec in repos:
 		var manifest := await _fetch_manifest(spec["repo"], spec["revision"], token)
-		if manifest.has("error"):
-			return manifest["error"]
 		if _cancelled:
 			return "Cancelled."
+		if manifest.has("error"):
+			refused.append(manifest["error"])
+			continue
 
 		for entry in manifest["files"]:
 			var relative := String(entry.get("path", ""))
@@ -81,6 +87,8 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 			})
 
 	if work.is_empty():
+		if not refused.is_empty():
+			return " ".join(refused)
 		return "The manifests listed nothing matching the expected layout."
 
 	for item in work:
@@ -94,7 +102,7 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 			return error
 		_done_bytes += item["bytes"]
 
-	return ""
+	return " ".join(refused)
 
 
 func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:

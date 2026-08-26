@@ -26,6 +26,16 @@ const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
 const MANNEQUIN := "res://addons/kimodo/samples/kimodo_mannequin.glb"
 
+## Why a download that fetched everything on offer can still leave one file
+## missing. LocalAI-io withdrew the converted motion weights after reading the
+## upstream NVIDIA licence, which forbids distributing a derivative model, so
+## the repository now serves a model card and nothing else. Anyone who wants
+## the file converts it themselves; only the conversion is permitted, not its
+## publication. The path is globalized: this sentence ends in a command
+## someone runs in a shell, and no shell can write to a user:// path.
+const MOTION_UNPUBLISHED := ("The motion GGUF is no longer published: its upstream licence forbids "
+		+ "distributing a converted model. Convert it with kimodo.cpp and put it at %s.")
+
 var _body: VBoxContainer
 
 var _setup_toggle: Button
@@ -351,7 +361,7 @@ func _build_weights() -> void:
 	var buttons := HBoxContainer.new()
 	_setup.add_child(buttons)
 	_download_button = _button(buttons, "Download", _on_download,
-			"Fetch both repositories and verify every file against the manifest. About 15.2 GiB. Files already in place are kept, so this also resumes and repairs.")
+			"Fetch whatever the configured repositories publish and verify every file against their manifests. About 15.2 GiB. Files already in place are kept, so this also resumes and repairs.")
 	_download_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_cancel_button = _button(buttons, "Cancel", func(): _downloader.cancel())
 	_cancel_button.disabled = true
@@ -536,7 +546,7 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 func _missing_weights() -> PackedStringArray:
 	var missing := PackedStringArray()
 	if not FileAccess.file_exists(Settings.motion_gguf_path()):
-		missing.append("kimodo-smplx-rp-v1-f32.gguf")
+		missing.append(Settings.MOTION_RELATIVE.get_file())
 
 	var bundle := Settings.text_bundle_path()
 	for name in ["tokenizer.gguf", "embedding.gguf", "final-norm.gguf"]:
@@ -571,6 +581,11 @@ func _refresh_presence() -> void:
 			generator if not generator.is_empty() else Settings.bundled_generator_path() + "  (not built)",
 			Settings.motion_gguf_path(), Settings.text_bundle_path(),
 			"complete" if missing.is_empty() else "missing: " + ", ".join(missing)]
+	# The download status says this too, and then the editor is closed and
+	# the label is gone while the file is still missing. The state and the
+	# reason for it belong in the same place.
+	if Settings.MOTION_RELATIVE.get_file() in missing:
+		_presence.tooltip_text += "\n\n" + MOTION_UNPUBLISHED % ProjectSettings.globalize_path(Settings.motion_gguf_path())
 
 	# The same answer on the folded pane, so "are the weights there?" does not
 	# need the pane opened to answer it.
@@ -644,6 +659,13 @@ func _on_download_finished(ok: bool, message: String) -> void:
 	_download_button.disabled = false
 	_cancel_button.disabled = true
 	_download_bar.value = 1.0 if ok else 0.0
+	# Everything the repositories still serve arriving, and the motion GGUF not,
+	# is the expected end of a download rather than a fault in it. Saying only
+	# that a manifest was unreadable would send someone looking for a broken
+	# network or a wrong repository name, and there is neither to find.
+	var missing := _missing_weights()
+	if missing.size() == 1 and missing[0] == Settings.MOTION_RELATIVE.get_file():
+		message = MOTION_UNPUBLISHED % ProjectSettings.globalize_path(Settings.motion_gguf_path())
 	_set_message(_download_status, message)
 	_refresh_presence()
 
