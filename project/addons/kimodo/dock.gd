@@ -840,12 +840,16 @@ func _process(delta: float) -> void:
 func _refresh_clips() -> void:
 	var root := Settings.output_dir()
 	var found := []
-	for name in DirAccess.get_directories_at(root):
-		var dir := root.path_join(name)
-		var positions := dir.path_join("root_positions.f32")
-		if not FileAccess.file_exists(positions):
-			continue
-		found.append({"dir": dir, "time": FileAccess.get_modified_time(positions)})
+	# The first generation is what creates the output root, so until then there
+	# is nothing to walk. Asking anyway would report the absence as an engine
+	# error, and an empty list is the honest answer, not a fault.
+	if DirAccess.dir_exists_absolute(root):
+		for name in DirAccess.get_directories_at(root):
+			var dir := root.path_join(name)
+			var positions := dir.path_join("root_positions.f32")
+			if not FileAccess.file_exists(positions):
+				continue
+			found.append({"dir": dir, "time": FileAccess.get_modified_time(positions)})
 	found.sort_custom(func(a, b): return a["time"] > b["time"])
 
 	_clips.clear()
