@@ -154,7 +154,7 @@ and a different one is a matter of replacing that file.
 
 A sample `BoneMap` sits at `addons/kimodo/samples/smplx_bone_map.tres`, and
 `kimodo/paths/bone_map` starts there. The Target field is an override for one
-session and starts empty, showing that setting as its placeholder; `Find target`
+session and starts empty, showing that setting as its placeholder; `Find in scene`
 re-reads it. It maps the humanoid profile onto SMPL-X joint names, which makes
 `KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as a
 worked example of the format. Regenerate it rather than editing it by hand:

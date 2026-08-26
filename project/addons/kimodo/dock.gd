@@ -228,7 +228,7 @@ func _build_target() -> void:
 	rig_label.text = "Skeleton"
 	rig_label.tooltip_text = "The rig to bake onto. Required, and resolved when a button here is pressed rather than stored: the selected Skeleton3D, or the first one in the open scene."
 	rows.add_child(rig_label)
-	var find := _button(rows, "Find target", _on_find_target,
+	var find := _button(rows, "Find in scene", _on_find_target,
 			rig_label.tooltip_text + " The report below follows the selection by itself.")
 	find.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
