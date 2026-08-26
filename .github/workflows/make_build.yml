@@ -1,8 +1,8 @@
 # Builds every target and publishes addons/kimodo as a release asset.
 # Run it by hand from the Actions tab, giving the version to cut.
 #
-# Everything is built on one Linux runner; the Windows side is crossed with
-# mingw-w64. See .github/actions/setup-cross-build for what that needs.
+# Each platform is built on its own runner with its own native toolchain.
+# See .github/actions/setup-build for what each of them needs.
 
 name: Release
 on:
@@ -48,7 +48,7 @@ jobs:
   build:
     needs: [prepare]
     name: ${{ matrix.target.platform }} ${{ matrix.target-type }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -56,8 +56,8 @@ jobs:
         # which are the ones kimodo.cpp itself supports.
         target:
           [
-            { platform: linux, arch: x86_64 },
-            { platform: windows, arch: x86_64 },
+            { platform: linux, arch: x86_64, os: ubuntu-24.04 },
+            { platform: windows, arch: x86_64, os: windows-2022 },
           ]
         target-type: [template_debug, template_release]
         float-precision: [single]
@@ -68,16 +68,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Python and SCons
-        uses: actions/setup-python@v5
+      - name: Setup the build
+        uses: ./.github/actions/setup-build
         with:
-          python-version: 3.x
-      - name: Install SCons
-        shell: bash
-        run: python -m pip install --upgrade scons
-
-      - name: Setup the cross build
-        uses: ./.github/actions/setup-cross-build
+          platform: ${{ matrix.target.platform }}
 
       - name: Restore .scons-cache
         uses: actions/cache@v4
@@ -91,16 +85,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kimodo.cpp/build/
-          key: kimodo-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ hashFiles('.git/modules/kimodo.cpp/HEAD', 'misc/toolchains/*.cmake', 'patches/*.patch') }}
+          key: kimodo-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ hashFiles('.git/modules/kimodo.cpp/HEAD', 'patches/*.patch') }}
 
       - name: Build
         shell: bash
         env:
           SCONS_CACHE: ${{ github.workspace }}/.scons-cache/
         run: |
-          if [ "${{ matrix.target.platform }}" = "windows" ]; then
-            export KIMODO_CMAKE_ARGS="${KIMODO_WINDOWS_CMAKE_ARGS}"
-          fi
           scons \
             target=${{ matrix.target-type }} \
             platform=${{ matrix.target.platform }} \

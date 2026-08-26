@@ -131,25 +131,28 @@ Only x86_64 Linux and Windows are listed in the `.gdextension`, because those ar
 the platforms kimodo.cpp itself supports: it needs a C++23 compiler and the GGML
 Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
 
-### Cross-compiling, and what CI does
+### What CI does
 
-Both are built on one Linux runner, Windows through mingw-w64, so there is a
-single container to keep working and one place the Vulkan SDK is installed.
-Building for a platform this machine is not picks up
-`misc/toolchains/<platform>-<arch>.cmake`, or whatever `KIMODO_CMAKE_TOOLCHAIN`
-names, and appends `KIMODO_CMAKE_ARGS` to the CMake configure line. Each target
-gets its own build tree under `kimodo.cpp/build/`, so a native build and a cross
-build of the same checkout do not fight over one CMake cache.
+Each platform is built on its own runner with its own native toolchain:
+`ubuntu-24.04` with GCC, `windows-2022` with MSVC. Windows is not crossed from
+Linux, even though it would be one container and one Vulkan SDK to install.
+MSVC is what kimodo.cpp's `CMakeLists.txt` has a branch for, what the patches in
+`patches/` were written against, and what ggml's own CI uses for a Windows
+Vulkan build, so it is the configuration whose problems somebody else has
+already hit.
 
-Two things have to be handed to the cross build, and
-`.github/actions/setup-cross-build` is where that happens. `glslc` emits SPIR-V
-and so does not care what it is compiling for, meaning the host's copy serves;
-ggml notices `CMAKE_CROSSCOMPILING` and builds its shader generator for the host
-by itself. The Vulkan loader is the awkward one, because nobody ships an import
-library for mingw. One is made on the spot with `dlltool` from a six-line `.def`:
-ggml-vulkan sets `VULKAN_HPP_DISPATCH_LOADER_DYNAMIC`, so `vkGetInstanceProcAddr`
-is the only symbol it needs at link time and everything else is resolved through
-the dispatcher at runtime.
+`.github/actions/setup-build` installs the rest per platform: the LunarG apt
+repository on Linux, the LunarG installer on Windows, because both sides need
+the `glslc` that compiles the GGML Vulkan shaders.
+
+Crossing is still possible by hand. Naming a CMake toolchain in
+`KIMODO_CMAKE_TOOLCHAIN` and appending to the configure line through
+`KIMODO_CMAKE_ARGS` is all the build needs, and each target gets its own tree
+under `kimodo.cpp/build/` so a native and a cross build of one checkout do not
+fight over a CMake cache. Nothing here is tested against that, though: the
+Vulkan loader has no mingw import library, and ggml-vulkan wants
+`vkGetInstanceProcAddr` at link time even though it resolves the rest through
+`VULKAN_HPP_DISPATCH_LOADER_DYNAMIC` at runtime.
 
 `ci.yml` builds both targets on every push. `make_build.yml` is run by hand with
 a version, builds both target types as well, assembles `addons/kimodo` with all

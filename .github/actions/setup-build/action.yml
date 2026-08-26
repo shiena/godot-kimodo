@@ -1,0 +1,79 @@
+name: Set up the build
+description: >
+  What both platforms need before scons runs: Python and SCons, a compiler, and
+  the Vulkan SDK, whose glslc compiles the GGML shaders that kmd-generate needs.
+
+inputs:
+  platform:
+    description: linux or windows.
+    required: true
+  vulkan-sdk-version:
+    description: Which LunarG SDK the Windows side installs. Bump it here.
+    required: false
+    default: '1.4.313.2'
+  lunarg-release:
+    description: Which LunarG apt list the Linux side uses. Must match the runner.
+    required: false
+    default: noble
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.x
+
+    - name: Install SCons
+      shell: bash
+      run: python -m pip install --upgrade scons
+
+    - name: Linux - install the toolchain and the SDK
+      if: inputs.platform == 'linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ninja-build libgl1-mesa-dev libglu1-mesa-dev libvulkan-dev
+
+        # LunarG's apt repository rather than the SDK tarball, which carries the
+        # source of every validation layer when all that is wanted is glslc and
+        # the headers. The metapackage is the fallback so a rename upstream
+        # cannot stop a release.
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+          | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc > /dev/null
+        sudo wget -qO "/etc/apt/sources.list.d/lunarg-vulkan-${{ inputs.lunarg-release }}.list" \
+          "https://packages.lunarg.com/vulkan/lunarg-vulkan-${{ inputs.lunarg-release }}.list"
+        sudo apt-get update
+        sudo apt-get install -y vulkan-headers shaderc spirv-headers \
+          || sudo apt-get install -y vulkan-sdk
+
+    - name: Windows - set up MSVC
+      if: inputs.platform == 'windows'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Windows - make sure there is a Ninja
+      if: inputs.platform == 'windows'
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - name: Windows - install the SDK
+      if: inputs.platform == 'windows'
+      shell: pwsh
+      run: |
+        $version = "${{ inputs.vulkan-sdk-version }}"
+        $installer = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+        curl.exe -sSfLo $installer `
+          "https://sdk.lunarg.com/sdk/download/$version/windows/vulkansdk-windows-X64-$version.exe"
+        # The installer is a Qt one, so it has to be told not to ask anything.
+        & $installer --accept-licenses --default-answer --confirm-command install
+        $sdk = "C:\VulkanSDK\$version"
+        if (-not (Test-Path $sdk)) { throw "the SDK did not land in $sdk" }
+        Add-Content $env:GITHUB_ENV "VULKAN_SDK=$sdk"
+        Add-Content $env:GITHUB_PATH "$sdk\Bin"
+
+    - name: Show what is here
+      shell: bash
+      run: |
+        scons --version | head -3
+        cmake --version | head -1 || echo "cmake comes from Visual Studio on Windows"
+        glslc --version | head -2
