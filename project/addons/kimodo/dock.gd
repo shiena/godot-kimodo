@@ -32,6 +32,11 @@ var _setup_toggle: Button
 var _setup: VBoxContainer
 
 var _prompt: TextEdit
+## One row per prompt after the first. Empty for an ordinary single-prompt run.
+var _segments: VBoxContainer
+var _add_segment: Button
+var _transition_row: HBoxContainer
+var _transition: SpinBox
 var _frames: SpinBox
 var _steps: SpinBox
 var _seed: SpinBox
@@ -175,6 +180,22 @@ func _build_generate() -> void:
 	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
 	_prompt.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_body.add_child(_prompt)
+
+	# Further prompts appear between the first one and the button that adds
+	# them, so the column reads in the order the clip will play.
+	_segments = VBoxContainer.new()
+	_body.add_child(_segments)
+
+	_transition_row = HBoxContainer.new()
+	_body.add_child(_transition_row)
+	_add_segment = _button(_transition_row, "+ Add prompt", _on_add_segment,
+			"Continue the clip with another prompt. The model is given the end of the previous stretch as a constraint, so the body carries over rather than restarting.")
+	_add_segment.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_transition = _spin(_transition_row, "Transition", 1, 60,
+			int(Settings.get_value("generation/transition")),
+			"Frames of overlap the model is given to join one prompt to the next. Absorbed rather than added, and it has to be shorter than every prompt after the first.")
+	_transition.value_changed.connect(func(value): Settings.set_value("generation/transition", int(value)))
+	_refresh_segments()
 
 	_generate_button = _button(_body, "Generate", _on_generate)
 	_status = _message(_body, 3)
@@ -637,6 +658,53 @@ func _set_message(label: Label, text: String) -> void:
 # --- generation --------------------------------------------------------------
 
 
+## A prompt after the first: how long it runs, and what it says. The generator
+## takes at most sixteen in one sequence, the first of which is the field above.
+func _on_add_segment() -> void:
+	if _segments.get_child_count() >= 15:
+		_set_message(_status, "A sequence takes at most 16 prompts.")
+		return
+	var row := HBoxContainer.new()
+	_segments.add_child(row)
+
+	var frames := SpinBox.new()
+	frames.min_value = 2
+	frames.max_value = 300
+	frames.value = mini(int(_frames.value), 300)
+	frames.tooltip_text = "Frames this prompt runs for. A prompt inside a sequence is limited to 300."
+	row.add_child(frames)
+
+	var prompt := LineEdit.new()
+	prompt.placeholder_text = "and then sits down"
+	prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(prompt)
+
+	_button(row, "×", _on_drop_segment.bind(row), "Remove this prompt.")
+	_refresh_segments()
+	prompt.grab_focus()
+
+
+func _on_drop_segment(row: Control) -> void:
+	_segments.remove_child(row)
+	row.queue_free()
+	_refresh_segments()
+
+
+## The transition is only an answer to a question a second prompt asks.
+func _refresh_segments() -> void:
+	_transition.get_parent().visible = _segments.get_child_count() > 0
+
+
+func _write_text(path: String, text: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_set_message(_status, "Cannot write %s." % path)
+		return false
+	file.store_string(text)
+	file.close()
+	return true
+
+
 func _on_generate() -> void:
 	if _pid >= 0:
 		return
@@ -646,33 +714,91 @@ func _on_generate() -> void:
 	if not _weights_present():
 		_set_message(_status, "The weights are incomplete. Download them under Weights below.")
 		return
-	if _prompt.text.strip_edges().is_empty():
-		_set_message(_status, "The prompt is empty.")
-		return
+	# The first prompt is the field; the rest are the rows beneath it.
+	var prompts := PackedStringArray([_prompt.text.strip_edges()])
+	var lengths := PackedInt32Array([int(_frames.value)])
+	for row in _segments.get_children():
+		lengths.append(int((row.get_child(0) as SpinBox).value))
+		prompts.append((row.get_child(1) as LineEdit).text.strip_edges())
+	for index in prompts.size():
+		if prompts[index].is_empty():
+			_set_message(_status, "Prompt %d is empty." % (index + 1))
+			return
+
+	var transition := int(_transition.value)
+	var total := 0
+	for length in lengths:
+		total += length
+	# Checked here rather than left to an exit code, because the generator's
+	# limits on a sequence are tighter than on a single prompt.
+	if prompts.size() > 1:
+		for index in lengths.size():
+			if lengths[index] > 300:
+				_set_message(_status, "Prompt %d asks for %d frames. Inside a sequence the limit is 300." % [
+						index + 1, lengths[index]])
+				return
+		for index in range(1, lengths.size()):
+			if transition >= lengths[index]:
+				_set_message(_status, "The transition is %d frames and prompt %d is only %d. It has to be shorter than every prompt after the first." % [
+						transition, index + 1, lengths[index]])
+				return
 
 	var stamp := str(Time.get_unix_time_from_system()).replace(".", "")
 	var out_dir: String = Settings.output_dir().path_join("gen_%s" % stamp)
 	DirAccess.make_dir_recursive_absolute(out_dir)
 
-	var prompt_path := out_dir.path_join("prompt.txt")
-	var file := FileAccess.open(prompt_path, FileAccess.WRITE)
-	if file == null:
-		_set_message(_status, "Cannot write %s." % prompt_path)
+	# prompt.txt is what the clip list reads for its label, so it carries the
+	# whole sequence on one line whatever the shape of the run.
+	if not _write_text(out_dir.path_join("prompt.txt"), " -> ".join(prompts)):
 		return
-	file.store_string(_prompt.text.strip_edges())
-	file.close()
+	var paths := PackedStringArray()
+	for index in prompts.size():
+		if prompts.size() == 1:
+			paths.append(out_dir.path_join("prompt.txt"))
+			break
+		var path := out_dir.path_join("prompt_%d.txt" % index)
+		if not _write_text(path, prompts[index]):
+			return
+		paths.append(path)
 
-	_pid = _spawn_generator(prompt_path, out_dir)
+	_pid = _spawn_generator(_generator_arguments(prompts, lengths, paths, transition, out_dir))
 	if _pid < 0:
 		_set_message(_status, "Could not start %s." % Settings.generator_path())
 		return
 	_pending_output = out_dir
 	_generate_button.disabled = true
-	_set_message(_status, "Generating into %s ..." % out_dir)
+	_set_message(_status, "Generating %d frames from %d prompt%s into %s ..." % [
+			total, prompts.size(), "" if prompts.size() == 1 else "s", out_dir])
+
+
+## The generator reads two shapes off one command line and tells them apart by
+## what sits in argv[3]: a prompt file for a single run, the word --sequence for
+## several. A sequence adds no frames of its own; the transition is absorbed
+## into the prompts either side of it.
+func _generator_arguments(prompts: PackedStringArray, lengths: PackedInt32Array,
+		paths: PackedStringArray, transition: int, out_dir: String) -> PackedStringArray:
+	var arguments := PackedStringArray([
+		ProjectSettings.globalize_path(Settings.motion_gguf_path()),
+		ProjectSettings.globalize_path(Settings.text_bundle_path()),
+	])
+	if prompts.size() == 1:
+		arguments.append(ProjectSettings.globalize_path(paths[0]))
+		arguments.append(str(lengths[0]))
+	else:
+		arguments.append("--sequence")
+		arguments.append(str(transition))
+	arguments.append(str(int(_steps.value)))
+	arguments.append(str(int(_seed.value)))
+	arguments.append(ProjectSettings.globalize_path(out_dir))
+	if prompts.size() > 1:
+		for index in prompts.size():
+			arguments.append(str(lengths[index]))
+			arguments.append(ProjectSettings.globalize_path(paths[index]))
+	return arguments
 
 
 ## The one place that knows how a motion gets generated.
-func _spawn_generator(prompt_path: String, out_dir: String) -> int:
+func _spawn_generator(arguments: PackedStringArray) -> int:
 	# OS.create_process() takes no environment, and every knob the child reads is
 	# an environment variable, so they go on the editor process to be inherited.
 	var environment := Settings.runtime_environment()
@@ -683,15 +809,6 @@ func _spawn_generator(prompt_path: String, out_dir: String) -> int:
 		else:
 			OS.set_environment(variable, value)
 
-	var arguments := [
-		ProjectSettings.globalize_path(Settings.motion_gguf_path()),
-		ProjectSettings.globalize_path(Settings.text_bundle_path()),
-		ProjectSettings.globalize_path(prompt_path),
-		str(int(_frames.value)),
-		str(int(_steps.value)),
-		str(int(_seed.value)),
-		ProjectSettings.globalize_path(out_dir),
-	]
 	return OS.create_process(ProjectSettings.globalize_path(Settings.generator_path()), arguments, false)
 
 

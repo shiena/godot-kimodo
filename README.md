@@ -105,14 +105,28 @@ a question of when.
 
 Length in frames, denoising steps, and a seed; then the prompt; then the button.
 
+**+ Add prompt** carries the clip on into another prompt, up to sixteen of them:
+"walks forward", then "sits down", then "waves", as one continuous take. The
+joins are not crossfades between separate clips. The model is handed the end of
+the previous stretch as a constraint on the root, every joint position and the
+ankle and wrist orientations, and generates the next stretch from there, so the
+body carries over and the character keeps the ground it covered.
+
+**Transition** is how many frames of overlap it gets. Those frames are absorbed
+rather than added, so a clip is always as long as its prompts add up to, and the
+transition has to be shorter than every prompt after the first. Each prompt in a
+sequence is limited to 300 frames, where a single prompt on its own may run to
+10000.
+
+A sequence costs what its prompts cost. The 8B text encoder runs once per
+prompt, and the denoiser once per stretch.
+
 Generation runs as a separate process. The text encoder is an 8B LLM2Vec model,
 and sharing the editor's Vulkan device with it would mean competing for VRAM and
 losing the editor to a failed run.
 
-The dock invokes the generator with seven positional arguments: the two model
-paths, the prompt file, length, steps, seed and destination. Nothing else is
-passed, so the two classifier-free guidance weights are whatever the generator
-was compiled with, currently 2.0 each.
+The classifier-free guidance weights are whatever the generator was compiled
+with, currently 2.0 each. Nothing on its command line sets them.
 
 ### Motion
 
@@ -206,7 +220,7 @@ editor and never ships in an export, so none of it has to reach a running game,
 while pointing the weights or the output at another drive is a personal answer
 that should not arrive as a change to a tracked file.
 
-All fifteen are declared when the plugin loads, so the Editor Settings dialog
+All sixteen are declared when the plugin loads, so the Editor Settings dialog
 lists each with a range, a file filter or an enum before the dock has written
 anything.
 
