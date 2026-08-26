@@ -1,5 +1,7 @@
 # godot-kimodo
 
+English | [日本語](README_ja.md)
+
 Generate character animation from a sentence, inside the Godot editor.
 
 godot-kimodo is an editor addon around [kimodo.cpp](https://github.com/localai-org/kimodo.cpp),
