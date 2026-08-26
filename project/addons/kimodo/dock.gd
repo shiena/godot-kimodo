@@ -60,6 +60,7 @@ var _preview_yaw := 0.6
 var _preview_pitch := 0.05
 var _preview_distance := 2.8
 var _preview_container: SubViewportContainer
+var _preview_grip: HSeparator
 var _preview_figure: Node3D
 var _preview_retargets := false
 
@@ -862,13 +863,13 @@ func _build_preview() -> void:
 	_preview_container.gui_input.connect(_on_preview_input)
 	_body.add_child(_preview_container)
 
-	var grip := HSeparator.new()
-	grip.mouse_filter = Control.MOUSE_FILTER_STOP
-	grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
-	grip.custom_minimum_size = Vector2(0.0, 8.0)
-	grip.tooltip_text = "Drag to make the preview taller or shorter."
-	grip.gui_input.connect(_on_preview_resized)
-	_body.add_child(grip)
+	_preview_grip = HSeparator.new()
+	_preview_grip.mouse_filter = Control.MOUSE_FILTER_STOP
+	_preview_grip.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	_preview_grip.custom_minimum_size = Vector2(0.0, 8.0)
+	_preview_grip.tooltip_text = "Drag to make the preview taller or shorter."
+	_preview_grip.gui_input.connect(_on_preview_resized)
+	_body.add_child(_preview_grip)
 
 	_preview = SubViewport.new()
 	# Without its own world this would render whatever the editor viewport is
@@ -1037,6 +1038,7 @@ func _on_preview_resized(event: InputEvent) -> void:
 	var height := clampf(_preview_container.custom_minimum_size.y + event.relative.y, 120.0, 900.0)
 	_preview_container.custom_minimum_size.y = height
 	Settings.editor_set("preview/height", int(height))
+	_preview_grip.accept_event()
 
 
 ## Orbit and zoom turn around the middle of the model itself. A guessed height
@@ -1082,20 +1084,26 @@ func _on_preview_scrubbed(value: float) -> void:
 	_preview_time = value * maxf(0.001, _motion.get_duration() if _motion != null else 1.0)
 
 
+## Whatever the viewport uses, it also swallows. The dock scrolls, so a wheel
+## that both zoomed and slid the panel out from under the pointer would make
+## the preview unusable.
 func _on_preview_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
 		_preview_yaw -= event.relative.x * 0.008
 		_preview_pitch = clampf(_preview_pitch - event.relative.y * 0.008, -1.4, 1.4)
 		_aim_preview()
+		_preview_container.accept_event()
 	elif event is InputEventMouseButton and event.pressed:
 		# Zooming by a ratio rather than a step: a fixed step is coarse up close
 		# and glacial far out. The near end is a hand's width from a joint.
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_preview_distance = clampf(_preview_distance * 0.85, 0.12, 30.0)
-			_aim_preview()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_preview_distance = clampf(_preview_distance * 1.18, 0.12, 30.0)
-			_aim_preview()
+		else:
+			return
+		_aim_preview()
+		_preview_container.accept_event()
 
 
 ## Reveals the last file saved from here, so the answer to "where did that go?"
