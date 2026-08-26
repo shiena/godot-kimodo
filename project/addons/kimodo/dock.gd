@@ -24,6 +24,7 @@ extends ScrollContainer
 
 const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
+const MANNEQUIN := "res://addons/kimodo/samples/kimodo_mannequin.glb"
 
 var _body: VBoxContainer
 
@@ -59,6 +60,8 @@ var _preview_yaw := 0.6
 var _preview_pitch := 0.05
 var _preview_distance := 2.8
 var _preview_container: SubViewportContainer
+var _preview_figure: Node3D
+var _preview_retargets := false
 
 var _models_dir: LineEdit
 var _token: LineEdit
@@ -895,12 +898,12 @@ func _build_preview() -> void:
 	ground.mesh = _preview_grid()
 	_preview.add_child(ground)
 
-	_preview_skeleton = KimodoSmplx.create_rest_skeleton()
-	_preview.add_child(_preview_skeleton)
-	KimodoSmplx.build_mannequin(_preview_skeleton, null)
+	_build_preview_figure()
 
+	# The player goes inside the figure. Parented above it the bone poses still
+	# move while a skinned mesh goes on rendering its rest.
 	_preview_player = AnimationPlayer.new()
-	_preview.add_child(_preview_player)
+	_preview_figure.add_child(_preview_player)
 
 	var row := HBoxContainer.new()
 	_body.add_child(row)
@@ -915,6 +918,34 @@ func _build_preview() -> void:
 	row.add_child(_preview_slider)
 
 	_aim_preview()
+
+
+## The bundled mannequin when it is there, the procedural capsules when it is
+## not, so stripping the model out leaves the addon working.
+##
+## Its bones already carry SkeletonProfileHumanoid names and it already stands
+## on the floor, which is why nothing here needs a BoneMap or an import-time
+## rest fix.
+func _build_preview_figure() -> void:
+	var scene: PackedScene = load(MANNEQUIN) if ResourceLoader.exists(MANNEQUIN) else null
+	if scene != null:
+		var model := scene.instantiate() as Node3D
+		_preview.add_child(model)
+		_preview_skeleton = _find_skeleton(model)
+		if _preview_skeleton != null:
+			_preview_figure = model
+			_preview_retargets = true
+			return
+		_preview.remove_child(model)
+		model.queue_free()
+
+	_preview_figure = Node3D.new()
+	_preview_figure.name = "Figure"
+	_preview.add_child(_preview_figure)
+	_preview_skeleton = KimodoSmplx.create_rest_skeleton()
+	_preview_figure.add_child(_preview_skeleton)
+	KimodoSmplx.build_mannequin(_preview_skeleton, null)
+	_preview_retargets = false
 
 
 ## A ground plane to judge contact against. The camera follows the root, so a
@@ -952,15 +983,21 @@ func _reload_preview() -> void:
 	if _motion == null:
 		return
 
-	var animation := _motion.bake_animation(_preview.get_path_to(_preview_skeleton))
+	var path := _preview_figure.get_path_to(_preview_skeleton)
+	var animation := KimodoRetarget.bake_animation(_motion, _preview_skeleton, null, path) 			if _preview_retargets else _motion.bake_animation(path)
 	if animation == null:
 		return
 	animation.loop_mode = Animation.LOOP_LINEAR
 	var library := AnimationLibrary.new()
 	library.add_animation(&"motion", animation)
 	_preview_player.add_animation_library(&"", library)
+	# Playing at zero speed rather than paused. A paused player still takes a
+	# seek and the bone poses do move, but a skinned mesh goes on rendering its
+	# rest, so only the skeleton animates. At zero speed the player keeps
+	# processing and the skin follows, while the clock below stays the only
+	# thing that moves time.
 	_preview_player.play(&"motion")
-	_preview_player.pause()
+	_preview_player.speed_scale = 0.0
 
 
 ## The clock is turned by hand: seeking keeps the slider and the pose describing
