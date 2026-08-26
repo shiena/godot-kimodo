@@ -234,8 +234,6 @@ func _build_target() -> void:
 	_target_label.custom_minimum_size = Vector2(0.0, 54.0)
 	_body.add_child(_target_label)
 
-	_button(_body, "Bake", _on_apply, "Put the clip on an AnimationPlayer in the open scene.")
-
 
 func _build_save() -> void:
 	_section(_body, "Save")
@@ -254,7 +252,12 @@ func _build_save() -> void:
 	_clip_name.tooltip_text = name_label.tooltip_text
 	_clip_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_row.add_child(_clip_name)
-	_button(_body, "Save clip...", _on_save_clip, "Write the Animation as a standalone resource.")
+	# Bake belongs here rather than under Target. Target is for deciding what
+	# the clip lands on and seeing whether it fits; both of these produce the
+	# thing, and differ only in where they put it.
+	_button(_body, "Bake", _on_apply, "Retarget onto the Skeleton3D under Target and put it on an AnimationPlayer in the open scene.")
+	_button(_body, "Save clip...", _on_save_clip,
+			"Retarget onto the Skeleton3D under Target and write the Animation as a standalone resource.")
 	_button(_body, "Open folder", _on_open_folder,
 			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
 	# Bake and Save clip used to answer on the Generate line, three sections

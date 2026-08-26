@@ -168,11 +168,16 @@ means having that rig to check against. Godot fills that gap itself: select a
 `BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector
 offers auto-mapping against a skeleton.
 
-**Save** writes the clip as a standalone resource under the name in **Clip
-name**, which is also the name **Bake** gives the animation inside the
-`AnimationPlayer`. **Open folder** reveals the last file it saved in the file
-manager. Collecting clips into an `AnimationLibrary` is `KimodoLibrary`'s job
-from a script; the dock no longer offers it.
+**Save** retargets onto the Skeleton3D that Target resolved, and differs only
+in where the result goes: **Bake** puts it on an `AnimationPlayer` in the open
+scene, **Save clip** writes it as a standalone resource. Both name it after
+**Clip name**, and **Open folder** reveals the last file saved. Collecting clips
+into an `AnimationLibrary` is `KimodoLibrary`'s job from a script; the dock no
+longer offers it.
+
+Both need a Skeleton3D in the open scene, because the animation's track paths
+are that skeleton's path within it. A scene with no rig in it answers `No
+Skeleton3D to bake onto.` on the line under the buttons.
 
 **Preview** at the bottom plays whatever Motion has loaded, on a bundled
 mannequin rather than the target rig: the rig belongs to the edited scene and
