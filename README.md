@@ -163,6 +163,11 @@ worked example of the format. Regenerate it rather than editing it by hand:
 godot --headless --path project -s res://tools/make_smplx_bone_map.gd
 ```
 
+Target asks two questions rather than offering two ways to answer one.
+**Skeleton** is the rig to bake onto and is required; **Bone map** is how that
+rig names its bones and is only needed when they are not the profile's names.
+Both are used on every bake.
+
 No map is shipped for Mixamo, VRM or any other rig, because getting one right
 means having that rig to check against. Godot fills that gap itself: select a
 `BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector

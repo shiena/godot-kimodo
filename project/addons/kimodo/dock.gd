@@ -213,20 +213,41 @@ func _build_motion() -> void:
 
 func _build_target() -> void:
 	_section(_body, "Target")
-	var bone_map_row := HBoxContainer.new()
-	_body.add_child(bone_map_row)
+
+	# Two answers, not two ways of giving one. The skeleton is what the clip
+	# lands on and is required; the map is how its bones are named and is only
+	# needed when they are not the profile's names. Stacked bare, an unlabelled
+	# field over an unlabelled button reads as a choice between them, so both
+	# rows say which question they answer and a grid lines them up.
+	var rows := GridContainer.new()
+	rows.columns = 2
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(rows)
+
+	var rig_label := Label.new()
+	rig_label.text = "Skeleton"
+	rig_label.tooltip_text = "The rig to bake onto. Required, and resolved when a button here is pressed rather than stored: the selected Skeleton3D, or the first one in the open scene."
+	rows.add_child(rig_label)
+	var find := _button(rows, "Find target", _on_find_target,
+			rig_label.tooltip_text + " The report below follows the selection by itself.")
+	find.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var map_label := Label.new()
+	map_label.text = "Bone map"
+	map_label.tooltip_text = "How that rig names its bones. Optional: leave it empty for a rig already named after SkeletonProfileHumanoid. Used together with the skeleton above, never instead of it."
+	rows.add_child(map_label)
+	var map_row := HBoxContainer.new()
+	map_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.add_child(map_row)
 	_bone_map_path = LineEdit.new()
 	# Empty by default: the standing answer is the editor setting, and repeating
 	# it here would make a field that has to be kept in step with one.
 	_bone_map_path.placeholder_text = _bone_map_placeholder()
-	_bone_map_path.tooltip_text = "Overrides kimodo/paths/bone_map for this session. Empty falls back to that setting, which is itself empty for a rig that already uses SkeletonProfileHumanoid bone names."
+	_bone_map_path.tooltip_text = map_label.tooltip_text + " Overrides kimodo/paths/bone_map for this session; empty falls back to that setting."
 	_bone_map_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bone_map_path.text_changed.connect(_on_bone_map_changed)
-	bone_map_row.add_child(_bone_map_path)
-	bone_map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
-
-	_button(_body, "Find target", _on_find_target,
-			"Look again for the target: the selected Skeleton3D, or the first one in the open scene, and re-read the BoneMap setting. The report follows the selection by itself.")
+	map_row.add_child(_bone_map_path)
+	map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
 
 	_target_label = RichTextLabel.new()
 	_target_label.bbcode_enabled = true
