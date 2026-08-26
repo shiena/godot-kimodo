@@ -76,7 +76,7 @@ const DEFAULTS := {
 	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
 	"weights/revision": "main",
 	"generation/frames": 120,
-	"generation/steps": 30,
+	"generation/steps": 150,
 	"generation/transition": 15,
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,

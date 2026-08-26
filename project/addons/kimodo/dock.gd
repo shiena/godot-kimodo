@@ -198,7 +198,7 @@ func _build_generate() -> void:
 	_seed = _spin(numbers, "Seed", 0, 1 << 30, 0)
 
 	_prompt = TextEdit.new()
-	_prompt.placeholder_text = "a person walks forward and waves"
+	_prompt.placeholder_text = "A person walks forward and waves their arms."
 	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
 	_prompt.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_body.add_child(_prompt)
@@ -838,7 +838,7 @@ func _on_add_segment() -> void:
 	row.add_child(frames)
 
 	var prompt := LineEdit.new()
-	prompt.placeholder_text = "and then sits down"
+	prompt.placeholder_text = "A person sits down."
 	prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(prompt)
 
