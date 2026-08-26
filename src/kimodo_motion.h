@@ -1,5 +1,7 @@
 #pragma once
 
+#include "skeletons.h"
+
 #include <godot_cpp/classes/animation.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/resource.hpp>
@@ -14,11 +16,13 @@ using namespace godot;
 
 // Holds the two raw F32 buffers that kmd-generate writes:
 //
-//   local_rotations_xyzw.f32 : [T, 22, 4] parent-local quaternions (x, y, z, w)
-//   root_positions.f32       : [T, 3]     root (pelvis) world position, meters
+//   local_rotations_xyzw.f32 : [T, J, 4] parent-local quaternions (x, y, z, w)
+//   root_positions.f32       : [T, 3]     root world position, meters
 //
-// Neither file carries a header, so the frame count is derived from the file
-// size.
+// Neither file carries a header, so the frame count and the skeleton are
+// derived from the two file sizes. J is 22, 30 or 34 depending on which model
+// generated the clip, and the three sizes are distinct, which is what lets the
+// skeleton be recognised rather than declared.
 class KimodoMotion : public Resource {
 	GDCLASS(KimodoMotion, Resource)
 
@@ -26,6 +30,9 @@ class KimodoMotion : public Resource {
 	PackedFloat32Array root_positions;
 	int frame_count = 0;
 	double fps = 30.0;
+	const skeletons::Definition *skeleton = &skeletons::smplx22();
+
+	void read_layout();
 
 protected:
 	static void _bind_methods();
@@ -37,6 +44,11 @@ public:
 	void clear();
 
 	int get_frame_count() const { return frame_count; }
+	int get_joint_count() const { return skeleton->joint_count; }
+	// The kimodo.skeleton key of the model that generated this clip.
+	String get_skeleton_key() const { return String(skeleton->key); }
+	String get_skeleton_label() const { return String(skeleton->label); }
+	const skeletons::Definition &get_skeleton() const { return *skeleton; }
 	double get_fps() const { return fps; }
 	void set_fps(double p_fps);
 	double get_duration() const;
@@ -54,8 +66,8 @@ public:
 	Quaternion get_global_rotation(int p_frame, int p_joint) const;
 	PackedVector3Array get_global_positions(int p_frame) const;
 
-	// Direct bake for a Skeleton3D that carries the SMPL-X rest verbatim. No
-	// retargeting is applied. Only the pelvis gets a position track.
+	// Direct bake for a Skeleton3D that carries this skeleton's rest verbatim.
+	// No retargeting is applied. Only the root gets a position track.
 	Ref<Animation> bake_animation(const NodePath &p_skeleton_path) const;
 
 	KimodoMotion() = default;

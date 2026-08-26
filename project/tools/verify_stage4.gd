@@ -22,7 +22,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	var skeleton := KimodoSmplx.create_humanoid_skeleton()
+	var skeleton := KimodoSkeleton.create_humanoid_skeleton()
 	var animation := KimodoRetarget.bake_animation(motion, skeleton, null, NodePath("Skeleton3D"))
 	skeleton.free()
 
