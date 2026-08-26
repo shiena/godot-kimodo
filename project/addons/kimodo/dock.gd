@@ -205,16 +205,17 @@ func _build_target() -> void:
 	var bone_map_row := HBoxContainer.new()
 	_body.add_child(bone_map_row)
 	_bone_map_path = LineEdit.new()
-	_bone_map_path.placeholder_text = "BoneMap (optional)"
-	_bone_map_path.tooltip_text = "Leave empty when the rig already uses SkeletonProfileHumanoid bone names."
+	# Empty by default: the standing answer is the editor setting, and repeating
+	# it here would make a field that has to be kept in step with one.
+	_bone_map_path.placeholder_text = _bone_map_placeholder()
+	_bone_map_path.tooltip_text = "Overrides kimodo/paths/bone_map for this session. Empty falls back to that setting, which is itself empty for a rig that already uses SkeletonProfileHumanoid bone names."
 	_bone_map_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bone_map_path.text = Settings.bone_map_path()
 	_bone_map_path.text_changed.connect(_on_bone_map_changed)
 	bone_map_row.add_child(_bone_map_path)
 	bone_map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
 
-	_button(_body, "Find target", _refresh_target,
-			"Look again for the target: the selected Skeleton3D, or the first one in the open scene. The report follows the selection by itself.")
+	_button(_body, "Find target", _on_find_target,
+			"Look again for the target: the selected Skeleton3D, or the first one in the open scene, and re-read the BoneMap setting. The report follows the selection by itself.")
 
 	_target_label = RichTextLabel.new()
 	_target_label.bbcode_enabled = true
@@ -863,11 +864,32 @@ func _load_motion(dir: String) -> bool:
 # --- target ------------------------------------------------------------------
 
 
+## The one place kimodo/paths/bone_map is re-read. Editor settings can change
+## while the dock is open and nothing announces it, so the button that goes
+## looking for the target picks that up on the same press.
+func _on_find_target() -> void:
+	_bone_map_path.placeholder_text = _bone_map_placeholder()
+	_on_bone_map_changed(_bone_map_path.text)
+
+
+## What the empty field stands for, so that leaving it alone is not a guess.
+func _bone_map_placeholder() -> String:
+	var fallback := Settings.bone_map_path()
+	return fallback.get_file() if not fallback.is_empty() else "BoneMap (optional)"
+
+
+## The field is an override, not the answer. Empty means the editor setting,
+## and only when that is empty too does the rig go unmapped, which is right for
+## one already named after SkeletonProfileHumanoid.
 func _on_bone_map_changed(path: String) -> void:
-	Settings.set_value("paths/bone_map", path)
+	var resolved := path.strip_edges()
+	if resolved.is_empty():
+		resolved = Settings.bone_map_path()
 	_bone_map = null
-	if not path.strip_edges().is_empty():
-		_bone_map = ResourceLoader.load(path, "BoneMap", ResourceLoader.CACHE_MODE_REUSE)
+	# Guarded rather than loaded blind: this runs on every keystroke, and a
+	# half-typed path is a console error for each one.
+	if not resolved.is_empty() and FileAccess.file_exists(resolved):
+		_bone_map = ResourceLoader.load(resolved, "BoneMap", ResourceLoader.CACHE_MODE_REUSE)
 	_refresh_target()
 
 
