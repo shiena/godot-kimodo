@@ -176,8 +176,10 @@ from a script; the dock no longer offers it.
 
 **Preview** at the bottom plays whatever Motion has loaded, on a bundled
 mannequin rather than the target rig: the rig belongs to the edited scene and
-cannot be in two worlds at once. Drag to orbit, wheel to zoom, and the slider
-scrubs. The camera follows the root, and the grid is world-fixed, so travel and
+cannot be in two worlds at once. Click the viewport to take it, which puts an
+accent border round the frame; only then do drag and wheel orbit and zoom, and
+until then the wheel belongs to the dock scrolling under it. Clicking anything
+else in the editor hands it back. The slider scrubs whatever the state. The camera follows the root, and the grid is world-fixed, so travel and
 ground contact both have something to read against. The grip under the viewport
 drags it taller.
 

@@ -63,6 +63,7 @@ var _preview_yaw := 0.6
 var _preview_pitch := 0.05
 var _preview_distance := 2.8
 var _preview_container: SubViewportContainer
+var _preview_frame: PanelContainer
 var _preview_grip: HSeparator
 var _preview_figure: Node3D
 var _preview_retargets := false
@@ -101,7 +102,11 @@ func _init() -> void:
 	# horizontal scrolling stays off so the children wrap instead of sliding
 	# out of reach.
 	horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	follow_focus = true
+	# Not follow_focus: clicking the preview to take it also focuses it, and a
+	# control taller than the panel is scrolled until its bottom edge lines up,
+	# which would drag the viewport out from under the press that started a
+	# drag. Nothing here is reached by tabbing anyway.
+	follow_focus = false
 
 
 func _ready() -> void:
@@ -1035,14 +1040,26 @@ func _write_clip(path: String, animation: Animation) -> void:
 func _build_preview() -> void:
 	_section(_body, "Preview")
 
+	# The frame is what shows whether the preview has the mouse. Without it,
+	# a wheel that sometimes zooms and sometimes scrolls the dock has nothing
+	# on screen explaining which it is about to do.
+	_preview_frame = PanelContainer.new()
+	_body.add_child(_preview_frame)
+
 	_preview_container = SubViewportContainer.new()
 	_preview_container.stretch = true
 	# A ScrollContainer hands every child its minimum height and scrolls the
 	# rest, so expanding does nothing here and the number below is the height.
 	_preview_container.custom_minimum_size = Vector2(0.0, float(Settings.get_value("preview/height")))
-	_preview_container.tooltip_text = "Drag to orbit, wheel to zoom."
+	_preview_container.tooltip_text = "Click to take the preview, then drag to orbit and wheel to zoom. Until then the wheel scrolls the dock."
+	# Focus rather than a flag of our own: clicking anything else in the editor
+	# hands it back without this having to watch for it.
+	_preview_container.focus_mode = Control.FOCUS_CLICK
+	_preview_container.focus_entered.connect(_on_preview_focus.bind(true))
+	_preview_container.focus_exited.connect(_on_preview_focus.bind(false))
 	_preview_container.gui_input.connect(_on_preview_input)
-	_body.add_child(_preview_container)
+	_preview_frame.add_child(_preview_container)
+	_on_preview_focus(false)
 
 	_preview_grip = HSeparator.new()
 	_preview_grip.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1278,10 +1295,32 @@ func _on_preview_scrubbed(value: float) -> void:
 	_preview_time = value * maxf(0.001, _motion.get_duration() if _motion != null else 1.0)
 
 
+## A border in the editor accent while the preview holds focus, and a hairline
+## the rest of the time. Two states of the same box rather than one appearing:
+## a frame that comes and goes moves everything under it by its own width.
+func _on_preview_focus(active: bool) -> void:
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.0, 0.0, 0.0, 0.0)
+	box.set_border_width_all(1)
+	box.border_color = Color(1.0, 1.0, 1.0, 0.10)
+	if active:
+		var editor_theme := EditorInterface.get_editor_theme()
+		box.border_color = editor_theme.get_color(&"accent_color", &"Editor") 				if editor_theme != null else Color(0.4, 0.7, 1.0)
+	_preview_frame.add_theme_stylebox_override(&"panel", box)
+
+
 ## Whatever the viewport uses, it also swallows. The dock scrolls, so a wheel
 ## that both zoomed and slid the panel out from under the pointer would make
-## the preview unusable.
+## the preview unusable. Which of the two it is depends on whether the preview
+## has been clicked: unfocused, every event here goes back to the dock.
 func _on_preview_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Explicit rather than left to the focus_mode, so the same press that
+		# takes the preview is also the first frame of a drag.
+		_preview_container.grab_focus()
+	if not _preview_container.has_focus():
+		return
+
 	if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
 		_preview_yaw -= event.relative.x * 0.008
 		_preview_pitch = clampf(_preview_pitch - event.relative.y * 0.008, -1.4, 1.4)
