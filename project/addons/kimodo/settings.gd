@@ -24,7 +24,6 @@ const SAMPLE_BONE_MAP := "res://addons/kimodo/samples/smplx_bone_map.tres"
 const DEFAULTS := {
 	"paths/models_dir": "user://kimodo_models",
 	"paths/output_dir": "user://kimodo_out",
-	"paths/library": "res://kimodo_clips.tres",
 	"paths/bone_map": SAMPLE_BONE_MAP,
 	"weights/motion_repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
 	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
@@ -44,7 +43,6 @@ const DEFAULTS := {
 const HINTS := {
 	"paths/models_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
 	"paths/output_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
-	"paths/library": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
 	"paths/bone_map": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
 	"weights/revision": {"hint": PROPERTY_HINT_PLACEHOLDER_TEXT, "hint_string": "a branch, tag or commit"},
 	"generation/frames": {"hint": PROPERTY_HINT_RANGE, "hint_string": "16,600,1"},

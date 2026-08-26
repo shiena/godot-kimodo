@@ -228,15 +228,19 @@ func _build_target() -> void:
 
 func _build_save() -> void:
 	_section(_body, "Save")
+	# Labelled, because an unlabelled field under a header called Save and
+	# holding something that looks like a stem reads as a path.
+	var name_label := Label.new()
+	name_label.text = "Clip name"
+	name_label.tooltip_text = "Names the animation inside the AnimationPlayer that Bake writes to, and suggests the file name that Save clip offers."
+	_body.add_child(name_label)
 	_clip_name = LineEdit.new()
 	_clip_name.text = "kimodo_motion"
-	_clip_name.tooltip_text = "Name the clip takes inside the player and the library."
+	_clip_name.tooltip_text = name_label.tooltip_text
 	_body.add_child(_clip_name)
 	_button(_body, "Save clip...", _on_save_clip, "Write the Animation as a standalone resource.")
-	_button(_body, "Add to library...", _on_save_library,
-			"Add or replace this name in an AnimationLibrary, creating it if needed.")
 	_button(_body, "Open folder", _on_open_folder,
-			"Show the last file saved here in the file manager, or the folder it would go to.")
+			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
 
 
 ## Both of these are gigabytes of files nobody commits, and both are a personal
@@ -1017,23 +1021,6 @@ func _write_clip(path: String, animation: Animation) -> void:
 	EditorInterface.get_resource_filesystem().scan()
 
 
-func _on_save_library() -> void:
-	var animation := _bake()
-	if animation == null:
-		return
-	_save_dialog(String(Settings.get_value("paths/library")), _write_library.bind(animation))
-
-
-func _write_library(path: String, animation: Animation) -> void:
-	var error := KimodoLibrary.save_to_library(animation, path, StringName(_clip_name.text))
-	if error == OK:
-		_last_saved = path
-		_set_message(_status, "Added %s to %s." % [_clip_name.text, path])
-	else:
-		_set_message(_status, "Saving %s failed (%d)." % [path, error])
-	EditorInterface.get_resource_filesystem().scan()
-
-
 ## A viewport of its own, on the SMPL-X mannequin rather than the target rig:
 ## the rig lives in the edited scene and cannot be in two worlds at once. What
 ## it shows is the motion as generated, before retargeting.
@@ -1298,12 +1285,10 @@ func _on_preview_input(event: InputEvent) -> void:
 
 ## Reveals the last file saved from here, so the answer to "where did that go?"
 ## is one press rather than a path read off a status line. Before anything has
-## been saved it falls back to where the library would land.
+## been saved it falls back to where Save clip would offer to put one.
 func _on_open_folder() -> void:
 	var target := _last_saved
 	if target.is_empty() or not FileAccess.file_exists(target):
-		target = String(Settings.get_value("paths/library")).get_base_dir()
-	if target.is_empty():
 		target = "res://"
 
 	var absolute := ProjectSettings.globalize_path(target)

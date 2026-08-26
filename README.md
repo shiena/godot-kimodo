@@ -168,8 +168,11 @@ means having that rig to check against. Godot fills that gap itself: select a
 `BoneMap`, set its profile to `SkeletonProfileHumanoid`, and the inspector
 offers auto-mapping against a skeleton.
 
-**Save** writes the clip as a standalone resource or into an `AnimationLibrary`,
-and **Open folder** reveals the last file it saved in the file manager.
+**Save** writes the clip as a standalone resource under the name in **Clip
+name**, which is also the name **Bake** gives the animation inside the
+`AnimationPlayer`. **Open folder** reveals the last file it saved in the file
+manager. Collecting clips into an `AnimationLibrary` is `KimodoLibrary`'s job
+from a script; the dock no longer offers it.
 
 **Preview** at the bottom plays whatever Motion has loaded, on a bundled
 mannequin rather than the target rig: the rig belongs to the edited scene and
@@ -277,16 +280,15 @@ export, so nothing it configures has to reach a running game, while pointing the
 weights or the output at another drive is nobody else's business and must not
 arrive as a change to a tracked file.
 
-`Settings.register()` declares all sixteen when the plugin loads, so the Editor
+`Settings.register()` declares all fifteen when the plugin loads, so the Editor
 Settings dialog lists each one with a range, a file filter or an enum before the
 dock has written anything.
 
 The cost is that editor settings belong to the editor rather than to the
-project, so the two `res://` paths, the shared `AnimationLibrary` and the
-`BoneMap`, carry into the next project opened with the same editor.
-`Settings.bone_map_path()` answers with the bundled sample when the stored path
-is not in this project, rather than hand the retargeter a file that will not
-open.
+project, so the one `res://` path among them, the `BoneMap`, carries into the
+next project opened with the same editor. `Settings.bone_map_path()` answers
+with the bundled sample when the stored path is not in this project, rather than
+hand the retargeter a file that will not open.
 
 The prompt and the seed live in neither. They belong to one invocation.
 
