@@ -145,12 +145,8 @@ func _ready() -> void:
 
 func _build_generate() -> void:
 	_section(_body, "Generate")
-	_prompt = TextEdit.new()
-	_prompt.placeholder_text = "a person walks forward and waves"
-	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
-	_prompt.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_body.add_child(_prompt)
-
+	# The three numbers are set once and left alone, so they go above the prompt
+	# rather than between it and the button that acts on it.
 	var numbers := HBoxContainer.new()
 	_body.add_child(numbers)
 	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.get_value("generation/frames")))
@@ -158,6 +154,12 @@ func _build_generate() -> void:
 	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.get_value("generation/steps")))
 	_steps.value_changed.connect(func(value): Settings.set_value("generation/steps", int(value)))
 	_seed = _spin(numbers, "Seed", 0, 1 << 30, 0)
+
+	_prompt = TextEdit.new()
+	_prompt.placeholder_text = "a person walks forward and waves"
+	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
+	_prompt.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_body.add_child(_prompt)
 
 	_generate_button = _button(_body, "Generate", _on_generate)
 	_status = _message(_body, 3)
