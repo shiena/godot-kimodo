@@ -47,6 +47,7 @@ var _motion_label: Label
 var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
 var _clip_name: LineEdit
+var _save_label: Label
 var _last_saved := ""
 
 var _preview: SubViewport
@@ -256,6 +257,10 @@ func _build_save() -> void:
 	_button(_body, "Save clip...", _on_save_clip, "Write the Animation as a standalone resource.")
 	_button(_body, "Open folder", _on_open_folder,
 			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
+	# Bake and Save clip used to answer on the Generate line, three sections
+	# up and usually scrolled out of sight, which made a refusal look like a
+	# button that did nothing.
+	_save_label = _message(_body, 2)
 
 
 ## Both of these are gigabytes of files nobody commits, and both are a personal
@@ -847,7 +852,7 @@ func _apply_delete(clip: String) -> void:
 		_reload_preview()
 		_set_message(_motion_label, "No motion loaded.")
 	_refresh_clips()
-	_set_message(_status, "%s is in the trash." % clip.get_file())
+	_set_message(_motion_label, "%s is in the trash." % clip.get_file())
 
 
 ## Looking inside a take is a file manager's job. Reading one straight into the
@@ -963,16 +968,22 @@ func _refresh_target() -> void:
 
 func _bake() -> Animation:
 	if _motion == null:
-		_set_message(_status, "Load or generate a motion first.")
+		_set_message(_save_label, "Load or generate a motion first.")
 		return null
 	var skeleton := _target_skeleton()
 	if skeleton == null:
-		_set_message(_status, "No Skeleton3D to bake onto.")
+		_set_message(_save_label, "No Skeleton3D to bake onto.")
 		return null
 
 	var root := EditorInterface.get_edited_scene_root()
 	var path := root.get_path_to(skeleton) if root != null else NodePath(skeleton.name)
-	return KimodoRetarget.bake_animation(_motion, skeleton, _bone_map, path)
+	var animation := KimodoRetarget.bake_animation(_motion, skeleton, _bone_map, path)
+	if animation == null:
+		# It refuses when the pelvis does not resolve, and says so on the
+		# console. Returning to a dock that shows nothing said less than that.
+		_set_message(_save_label,
+				"Nothing to bake onto %s. Its pelvis did not resolve; see the BoneMap and the Output log." % skeleton.name)
+	return animation
 
 
 func _on_apply() -> void:
@@ -982,7 +993,7 @@ func _on_apply() -> void:
 
 	var root := EditorInterface.get_edited_scene_root()
 	if root == null:
-		_set_message(_status, "Open a scene to bake into.")
+		_set_message(_save_label, "Open a scene to bake into.")
 		return
 
 	var player := _find_player(root)
@@ -1005,7 +1016,7 @@ func _on_apply() -> void:
 
 	EditorInterface.get_selection().clear()
 	EditorInterface.get_selection().add_node(player)
-	_set_message(_status, "Baked into %s as kimodo/%s." % [player.name, _clip_name.text])
+	_set_message(_save_label, "Baked into %s as kimodo/%s." % [player.name, _clip_name.text])
 	_refresh_target()
 
 
@@ -1033,9 +1044,9 @@ func _write_clip(path: String, animation: Animation) -> void:
 	var error := KimodoLibrary.save_animation(animation, path)
 	if error == OK:
 		_last_saved = path
-		_set_message(_status, "Saved %s." % path)
+		_set_message(_save_label, "Saved %s." % path)
 	else:
-		_set_message(_status, "Saving %s failed (%d)." % [path, error])
+		_set_message(_save_label, "Saving %s failed (%d)." % [path, error])
 	EditorInterface.get_resource_filesystem().scan()
 
 
@@ -1364,10 +1375,10 @@ func _on_open_folder() -> void:
 
 	var absolute := ProjectSettings.globalize_path(target)
 	if not (FileAccess.file_exists(target) or DirAccess.dir_exists_absolute(target)):
-		_set_message(_status, "%s is not there yet." % target)
+		_set_message(_save_label, "%s is not there yet." % target)
 		return
 	if OS.shell_show_in_file_manager(absolute, true) != OK:
-		_set_message(_status, "Could not open %s." % absolute)
+		_set_message(_save_label, "Could not open %s." % absolute)
 
 
 func _save_dialog(default_path: String, on_selected: Callable) -> void:
