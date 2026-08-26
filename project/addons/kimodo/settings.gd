@@ -172,11 +172,33 @@ static func motion_relative(key: String = "") -> String:
 	return String(skeleton_entry(key)["motion"])
 
 
-## The repository to fetch the motion GGUF from: the override when there is
-## one, the published repository otherwise.
+## The repository to fetch the motion GGUF from: a mirror when one is set, the
+## repository that publishes the chosen model otherwise.
+##
+## A stored value that only repeats a published repository is not a mirror. It
+## is the field as an earlier version of this addon wrote it, when there was
+## one model and its repository was the default, and honouring it would pin
+## every model to that one download. Someone who pastes a published repository
+## by hand means the same thing as leaving it blank.
 static func motion_repo(key: String = "") -> String:
 	var override := String(get_value("weights/motion_repo")).strip_edges()
-	return override if not override.is_empty() else String(skeleton_entry(key)["repo"])
+	if override.is_empty() or _is_published_repo(override):
+		return String(skeleton_entry(key)["repo"])
+	return override
+
+
+static func _is_published_repo(repo: String) -> bool:
+	for key in SKELETONS:
+		if repo == String(SKELETONS[key]["repo"]):
+			return true
+	return false
+
+
+static func _is_bundled_bone_map(path: String) -> bool:
+	for key in SKELETONS:
+		if path == String(SKELETONS[key]["bone_map"]):
+			return true
+	return false
 
 
 ## Absolute path of the motion GGUF under the configured model directory.
@@ -206,9 +228,16 @@ static func output_dir() -> String:
 ## does not open.
 ##
 ## The sample is per skeleton because it pairs the humanoid profile with that
-## skeleton joint names, and the three sets of names have nothing in common.
+## skeleton own joint names, and the three sets of names have nothing in
+## common. A bundled sample sitting in the field therefore means "the sample"
+## rather than that one file, and which one it resolves to follows the model.
+## Anything else in the field is a map someone chose, and an empty field still
+## means no map at all, which is right for a rig already named after
+## SkeletonProfileHumanoid.
 static func bone_map_path(key: String = "") -> String:
 	var stored := String(get_value("paths/bone_map"))
+	if _is_bundled_bone_map(stored):
+		stored = String(skeleton_entry(key)["bone_map"])
 	if stored.is_empty() or FileAccess.file_exists(stored):
 		return stored
 	var sample := String(skeleton_entry(key)["bone_map"])
