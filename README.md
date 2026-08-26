@@ -23,7 +23,7 @@ The model sets the bar, not the addon.
 
 | | Needs | Why |
 |---|---|---|
-| Disk | **15.2 GiB** | 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, across 36 files |
+| Disk | **15.2 GiB** | 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, across 36 files. The three models are within 1% of each other in size, and all of them share the one text bundle |
 | VRAM | **2 GB** in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128,256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers, so no setting gets under it |
 | Vulkan | **1.2** | ggml-vulkan refuses to initialise below it |
 | Platform | x86_64 Linux or Windows | kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, which rules out mobile and web |
@@ -45,24 +45,36 @@ Download `godot-kimodo-vX.Y.Z.zip` from the
 covers both platforms. Enable **Kimodo** under **Project Settings > Plugins**, and
 the dock appears on the right.
 
-The weights are not in the archive. The addon downloads the text encoder,
-once, on first use. The motion model it cannot download; see
+The weights are not in the archive. The addon downloads them, once, on first
+use. The SMPL-X model is the exception and has to be converted locally; see
 [The motion model](#the-motion-model).
 
 To compile it yourself instead, see [Build from source](#build-from-source).
 
 ## The motion model
 
-Kimodo needs two sets of weights, and only one of them can be published.
+Three models generate motion, and **Model** in the Setup pane picks between
+them. They differ in the skeleton they predict, which decides how much of a
+humanoid rig the result can drive.
 
-The text encoder is published, and **Download** fetches it. The motion model
-is not. `LocalAI-io/Kimodo-SMPLX-RP-v1-GGML` carried a converted GGUF until
-its maintainers read the upstream licence, which forbids distributing a
-derivative model. The repository now holds a model card and nothing else, so
-**Download** leaves the motion GGUF missing however many times you press it.
+| Model | Joints | Reaches | Weights |
+|---|---|---|---|
+| **SMPL-X** | 22 | all 22 | convert it yourself |
+| **SOMA** | 30 | 25, adding a jaw, eyes and fingertips | published |
+| **Unitree G1** | 34 | 16; a robot with no head, and three single-axis joints where a rig has one | published |
 
-The same organisation publishes SOMA and G1 conversions, whose licence permits
-it. This addon cannot read either; see [Limitations](#limitations).
+They share the one text encoder, so switching models re-downloads about 1 GiB
+and nothing else.
+
+SOMA and G1 download like anything else: press **Download**. They are under the
+[NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
+which allows the conversion to be redistributed.
+
+SMPL-X is the one that cannot. `LocalAI-io/Kimodo-SMPLX-RP-v1-GGML` carried a
+converted GGUF until its maintainers read the upstream licence, which forbids
+distributing a derivative model. The repository now holds a model card and
+nothing else, so **Download** leaves that GGUF missing however many times you
+press it.
 
 Converting the SMPL-X checkpoint for yourself is allowed; publishing the result
 is not. The converter is in the `kimodo.cpp` submodule. It needs Nix, a Hugging
@@ -100,14 +112,19 @@ cannot write to that, so point the field at an ordinary directory with
 Open the **Setup** pane afterwards. It re-checks the files every time it
 opens, and the presence line reads all 36 files.
 
+A clip names no skeleton: it is two headerless buffers of floats. The addon
+recognises which model produced one from its width, since 22, 30 and 34 joints
+are three different widths. So an old clip keeps working, and a clip generated
+with the wrong model in the picker still loads as what it actually is.
+
 ## Generate your first clip
 
-1. Open the **Setup** pane and check **Model directory**. This is where the
-   weights land.
-2. Click **Download**, and wait. The download is 14.14 GiB, and the pane reports
-   each file as it arrives. It ends by reporting the motion GGUF as missing,
-   which is expected. Convert it as [The motion model](#the-motion-model)
-   describes.
+1. Open the **Setup** pane, pick a **Model**, and check **Model directory**.
+   This is where the weights land.
+2. Click **Download**, and wait. The download is 15.2 GiB, and the pane reports
+   each file as it arrives. On SMPL-X it ends by reporting the motion GGUF as
+   missing, which is expected: convert it as
+   [The motion model](#the-motion-model) describes.
 3. Under **Generate**, set the length in frames and enter a prompt.
 4. Click **Generate**. The clip appears in **Motion** when the run finishes, and
    **Preview** plays it on a built-in mannequin.
@@ -138,11 +155,17 @@ answer survives the pane being folded again.
 where generated clips are written. Both belong to the machine rather than to the
 project.
 
+**Model** picks which of the three skeletons to generate for, and everything
+else in the pane follows it: which GGUF has to be on disk, which repository
+serves it, and which mannequin stands in for the rig in **Preview**.
+
 **Weights** fetches the configured repositories and checks every file against
 their manifests. A repository that will not serve its manifest costs its own
 files and no others, which is what leaves the text bundle downloadable while
-the motion GGUF is not. Neither published repository needs an access token; the
-field is there for a gated mirror of your own.
+the SMPL-X GGUF is not. No published repository needs an access token; the
+field is there for a gated mirror of your own. Setting **Motion repo** in
+Editor Settings overrides the published repository for whichever model is
+picked.
 
 Downloading keeps whatever is already on disk, so it resumes an interrupted
 fetch and repairs a damaged one. Clicking it when all 36 files are present asks
@@ -216,14 +239,23 @@ scale between the two rest heights:
 
 ```
 Skeleton3D  56 bones
-mapped 22/22, scale 0.999
+SMPL-X: mapped 22/22, scale 0.999
 every joint resolved
 ```
 
+The count is against what the humanoid profile can carry, not against the joint
+count. G1 reads `mapped 16/16` on a rig that resolves everything, because the
+other 18 of its 34 joints are single axes no rig gives a bone to.
+
 A sample map sits at `addons/kimodo/samples/smplx_bone_map.tres` and is where
-the setting starts. It pairs the humanoid profile with SMPL-X joint names, so a
-rig carrying those names verbatim is a valid target, and it doubles as a worked
-example of the format.
+the setting starts, with `soma_bone_map.tres` and `g1_bone_map.tres` alongside
+it. Each pairs the humanoid profile with one model own joint names, so a rig
+carrying those names verbatim is a valid target, and they double as worked
+examples of the format. Regenerate them rather than editing them:
+
+```sh
+godot --headless --path project -s res://tools/make_bone_maps.gd
+```
 
 For Mixamo, VRM, or any other rig, Godot builds the map itself. Create a
 `BoneMap` and set its profile to `SkeletonProfileHumanoid`. The inspector then
@@ -277,7 +309,7 @@ editor and never ships in an export, so none of it has to reach a running game.
 Pointing the weights or the output at another drive is a personal answer, and it
 should not arrive as a change to a tracked file.
 
-All 16 are declared when the plugin loads, so the Editor Settings dialog
+All 20 are declared when the plugin loads, so the Editor Settings dialog
 lists each with a range, a file filter, or an enum before the dock has written
 anything.
 
@@ -324,12 +356,13 @@ table is slightly asymmetric and bows the knees further outward than a leg does,
 and the retargeting scale is measured against it. It can be dropped once the
 model files expose the rest pose directly.
 
-**Only SMPL-X models load.** kimodo.cpp also generates for the 30-joint SOMA
-and the 34-joint Unitree G1 skeletons, and unlike SMPL-X those conversions are
-published. This addon reads SMPL-X alone: the rest pose it decodes against, the
-joint parents it walks, and the humanoid bone map are all that one size. A clip
-generated with either of the others is refused as it loads, naming the joint
-count it found.
+**The SOMA and G1 mappings are unverified.** SMPL-X has been watched against
+generated motion; the other two have not, because getting a clip out of them
+needs the weights, a GPU run and something to compare against. Which humanoid
+bone each of their joints drives is a reading of the joint names and the rest
+offsets, and a reading can be wrong. G1 in particular resolves its three
+single-axis hip joints onto one thigh bone by taking the last of the three,
+which is right if the chain is ordered pitch, roll, yaw as the names say.
 
 **Only the 22 body joints are used.** Kimodo is SMPL-X, but this addon reads the
 body skeleton alone: no hands, no face. `SkeletonProfileHumanoid` has 56 bones,
@@ -477,6 +510,12 @@ blender --background --python scripts/make_mannequin.py
 Its bones are laid out from the SMPL-X rest and already carry
 `SkeletonProfileHumanoid` names, which is what lets the preview use it with no
 bone map and no import-time rest correction.
+
+Only SMPL-X ships one. SOMA and G1 fall back to capsules generated from their
+own rest pose, which is a worse-looking answer and a correct one. Each model
+has a mannequin setting of its own under `kimodo/paths`, so a modeller can
+point one at a figure of their own. It has to meet the same two conditions:
+`SkeletonProfileHumanoid` bone names, and standing on the floor at rest.
 
 ## Licence
 
