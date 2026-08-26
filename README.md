@@ -132,8 +132,8 @@ as its placeholder.
 
 A sample sits at `addons/kimodo/samples/smplx_bone_map.tres` and is what the
 setting starts at. It maps the humanoid profile onto SMPL-X joint names, which
-makes `KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as
-a worked example of the format. Regenerate it rather than editing it by hand:
+means a rig carrying those names verbatim is a valid target, and it doubles as a
+worked example of the format. Regenerate it rather than editing it by hand:
 
 ```sh
 godot --headless --path project -s res://tools/make_smplx_bone_map.gd
@@ -154,8 +154,9 @@ scene; **Save clip** writes it as a standalone resource. Both name it after
 refuses `*`, `?` and `|`, which a library takes.
 
 A saved file lands inside the project, so it is revealed in the FileSystem dock
-rather than in a file manager. Collecting clips into an `AnimationLibrary` is
-`KimodoLibrary`'s job from a script; the dock does not offer it.
+rather than in a file manager. Collecting several of them into an
+`AnimationLibrary` is the `AnimationPlayer`'s own Animation panel's job, so the
+dock does not offer it.
 
 Both need a `Skeleton3D` in the open scene, because the animation's track paths
 are that skeleton's path within it. A scene with no rig in it answers `No
@@ -240,58 +241,6 @@ guarded by `#if defined(__unix__)`, so `GGML_VK_DISABLE_COOPMAT`,
 cooperative-matrix path can convert the F32 reference weights to FP16. Set them
 by hand if the output has to match the reference.
 
-## The API
-
-The dock is GDScript over four classes, all of which are usable from a script of
-your own.
-
-`KimodoMotion` (`Resource`) holds one clip.
-
-| Member | Purpose |
-|---|---|
-| `load_directory(dir)` | Reads `local_rotations_xyzw.f32` and `root_positions.f32` from a `kmd-generate` OUT_DIR |
-| `load_files(rotations, root_positions)` | The same, with explicit paths |
-| `frame_count`, `fps`, `get_duration()` | Frame count comes from the file size; fps defaults to 30 |
-| `get_local_rotation(frame, joint)` | Parent-local quaternion, normalized |
-| `get_root_position(frame)` | Pelvis world position in meters |
-| `get_global_rotation(frame, joint)` | Accumulated down the parent chain |
-| `get_global_positions(frame)` | Forward kinematics over the SMPL-X rest offsets |
-| `bake_animation(skeleton_path)` | 22 rotation tracks plus one pelvis position track, for a skeleton carrying the SMPL-X rest verbatim |
-
-`KimodoSmplx` (static) holds the skeleton reference data and builds preview rigs.
-
-| Member | Purpose |
-|---|---|
-| `get_parents()`, `get_joint_names()` | The 22-joint hierarchy, matching `motion_decode.cpp` |
-| `get_humanoid_bone_names()` | The `SkeletonProfileHumanoid` name for each joint |
-| `get_rest_offsets()`, `get_rest_positions()`, `get_rest_height()` | Rest pose as SMPL-X publishes it, pelvis at the origin, and the height the retarget scale is measured against |
-| `get_ground_offset()` | How far the pelvis is lifted so the skeletons below stand on y = 0 |
-| `create_rest_skeleton()` | A fresh 22-bone `Skeleton3D` under SMPL-X joint names, standing on the floor |
-| `create_humanoid_skeleton()` | The same rest under profile bone names, so the no-model preview is a retarget target like any other |
-| `build_mannequin(skeleton, owner)` | Hangs boxes and capsules off the bones. Left limbs warm, right limbs cold, spine grey, with a yellow nose marker for facing |
-
-`KimodoRetarget` (static) drives an arbitrary humanoid rig.
-
-| Member | Purpose |
-|---|---|
-| `resolve_bones(skeleton, bone_map)` | Target bone per SMPL-X joint. A null bone map matches profile names directly |
-| `describe_mapping(skeleton, bone_map)` | What resolved, what did not, and the rest heights behind the scale |
-| `get_scale(skeleton, bone_map)` | Rest height ratio, measured over the mapped joints only |
-| `bake_animation(motion, skeleton, bone_map, path)` | Rotation tracks for the mapped bones plus the scaled pelvis translation |
-| `build_mannequin(skeleton, bone_map, owner)` | Preview geometry for a mapped rig |
-
-`KimodoLibrary` (static) writes the result out.
-
-| Member | Purpose |
-|---|---|
-| `save_animation(animation, path)` | One clip on its own; missing directories are created |
-| `save_to_library(animation, library_path, name)` | Adds or replaces a name in an `AnimationLibrary`, creating it if needed |
-| `attach_library(player, library_path, library_name)` | Loads a saved library onto an `AnimationPlayer` |
-
-The rest offsets are not in the motion GGUF, so `src/smplx22.cpp` duplicates the
-table that `kimodo.cpp/demo/index.html` calibrated from the upstream fixture.
-Once the converter and the C API expose the rest pose, that table can go.
-
 ## Status
 
 The whole path works, and it has been run against real generated motion: the
@@ -302,6 +251,13 @@ What is still unconfirmed is **left against right**. The clip it was checked
 with barely swings its arms, so settling it takes a prompt that raises one named
 hand. The tests below cannot settle it either, because they run against a
 synthetic fixture.
+
+One thing is known to be approximate rather than unconfirmed. The rest pose is
+not in the motion GGUF, so the addon carries the table that
+`kimodo.cpp/demo/index.html` calibrated from the upstream fixture. That table is
+slightly asymmetric and bows the knees outward further than a leg does, and the
+retargeting scale is measured against it. Once the converter and the C API
+expose the rest pose, it can go.
 
 ## Building
 
