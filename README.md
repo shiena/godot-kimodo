@@ -45,17 +45,66 @@ Download `godot-kimodo-vX.Y.Z.zip` from the
 covers both platforms. Enable **Kimodo** under **Project Settings > Plugins**, and
 the dock appears on the right.
 
-The weights are not in the archive. The addon downloads them, once, on first
-use.
+The weights are not in the archive. The addon downloads the text encoder,
+once, on first use. The motion model it cannot download; see
+[The motion model](#the-motion-model).
 
 To compile it yourself instead, see [Build from source](#build-from-source).
+
+## The motion model
+
+Kimodo needs two sets of weights, and only one of them can be published.
+
+The text encoder is published, and **Download** fetches it. The motion model
+is not. `LocalAI-io/Kimodo-SMPLX-RP-v1-GGML` carried a converted GGUF until
+its maintainers read the upstream licence, which forbids distributing a
+derivative model. The repository now holds a model card and nothing else, so
+**Download** leaves the motion GGUF missing however many times you press it.
+
+Converting the checkpoint for yourself is allowed; publishing the result is
+not. The converter is in the `kimodo.cpp` submodule. It needs Nix, a Hugging
+Face account, and the licence accepted on
+[nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1),
+which is gated.
+
+**Model directory** accepts a `user://` path, and the default is one. A shell
+cannot write to that, so point the field at an ordinary directory with
+**Browse** before you start.
+
+1. Sign in to Hugging Face.
+
+   ```sh
+   cd kimodo.cpp
+   nix develop path:. --command hf auth login
+   ```
+
+2. Download the checkpoint. It is 1.05 GiB, on top of the 14.14 GiB the addon
+   fetches.
+
+   ```sh
+   nix develop path:. --command scripts/download_weights.sh --output "$PWD/models"
+   ```
+
+3. Convert it into the **Model directory**, replacing `<MODEL_DIRECTORY>` with
+   the path in that field.
+
+   ```sh
+   nix develop path:. --command python scripts/convert_motion_to_gguf.py \
+     --input models/Kimodo-SMPLX-RP-v1 \
+     --output <MODEL_DIRECTORY>/models/kimodo-smplx-rp-v1-f32.gguf
+   ```
+
+Open the **Setup** pane afterwards. It re-checks the files every time it
+opens, and the presence line reads all 36 files.
 
 ## Generate your first clip
 
 1. Open the **Setup** pane and check **Model directory**. This is where the
    weights land.
-2. Click **Download**, and wait. The download is 15.2 GiB, and the pane reports
-   each file as it arrives.
+2. Click **Download**, and wait. The download is 14.14 GiB, and the pane reports
+   each file as it arrives. It ends by reporting the motion GGUF as missing,
+   which is expected. Convert it as [The motion model](#the-motion-model)
+   describes.
 3. Under **Generate**, set the length in frames and enter a prompt.
 4. Click **Generate**. The clip appears in **Motion** when the run finishes, and
    **Preview** plays it on a built-in mannequin.
@@ -86,14 +135,16 @@ answer survives the pane being folded again.
 where generated clips are written. Both belong to the machine rather than to the
 project.
 
-**Weights** fetches two published repositories and checks every file against
-their manifests. Neither needs an access token; the field is there for a gated
-mirror.
+**Weights** fetches the configured repositories and checks every file against
+their manifests. A repository that will not serve its manifest costs its own
+files and no others, which is what leaves the text bundle downloadable while
+the motion GGUF is not. Neither published repository needs an access token; the
+field is there for a gated mirror of your own.
 
 Downloading keeps whatever is already on disk, so it resumes an interrupted
 fetch and repairs a damaged one. Clicking it when all 36 files are present asks
 first, and says what it would do. It compares sizes against the manifest and
-re-fetches only a mismatch, which usually transfers nothing but the two
+re-fetches only a mismatch, which usually transfers nothing but the
 manifests.
 Selecting **Re-hash existing** reads all 15.2 GiB back to check contents as well,
 and the question says so.
@@ -427,6 +478,7 @@ The release archive additionally bundles [ggml](https://github.com/ggml-org/ggml
 which is MIT. [NOTICE](NOTICE) carries the attributions Apache 2.0 asks for,
 including which files this project patches and why.
 
-The weights are not distributed with the addon. It downloads them from their
-published repositories, and they carry terms of their own; read those before
-shipping anything generated with them.
+The weights are not distributed with the addon. It downloads what is published,
+and the motion model is not: converting that checkpoint is allowed,
+redistributing the conversion is not. Both carry terms of their own; read those
+before shipping anything generated with them.
