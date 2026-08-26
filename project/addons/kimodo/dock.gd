@@ -48,7 +48,6 @@ var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
 var _clip_name: LineEdit
 var _save_label: Label
-var _last_saved := ""
 
 var _preview: SubViewport
 var _preview_skeleton: Skeleton3D
@@ -279,8 +278,6 @@ func _build_save() -> void:
 	_button(_body, "Bake", _on_apply, "Retarget onto the Skeleton3D under Target and put it on an AnimationPlayer in the open scene.")
 	_button(_body, "Save clip...", _on_save_clip,
 			"Retarget onto the Skeleton3D under Target and write the Animation as a standalone resource.")
-	_button(_body, "Open folder", _on_open_folder,
-			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
 	# Bake and Save clip used to answer on the Generate line, three sections
 	# up and usually scrolled out of sight, which made a refusal look like a
 	# button that did nothing. It carries a resting line the way Motion does:
@@ -1069,12 +1066,16 @@ func _on_save_clip() -> void:
 
 func _write_clip(path: String, animation: Animation) -> void:
 	var error := KimodoLibrary.save_animation(animation, path)
-	if error == OK:
-		_last_saved = path
-		_set_message(_save_label, "Saved %s." % path)
-	else:
+	if error != OK:
 		_set_message(_save_label, "Saving %s failed (%d)." % [path, error])
-	EditorInterface.get_resource_filesystem().scan()
+		return
+	_set_message(_save_label, "Saved %s." % path)
+	# Revealed in the FileSystem dock rather than in a file manager: this lands
+	# inside the project, where the editor is already showing it. update_file()
+	# before select_file(), because the dock refuses to navigate to a path it
+	# has not been told about and a full scan() would not have finished by then.
+	EditorInterface.get_resource_filesystem().update_file(path)
+	EditorInterface.select_file(path)
 
 
 ## A viewport of its own, on the SMPL-X mannequin rather than the target rig:
@@ -1390,22 +1391,6 @@ func _on_preview_input(event: InputEvent) -> void:
 			return
 		_aim_preview()
 		_preview_container.accept_event()
-
-
-## Reveals the last file saved from here, so the answer to "where did that go?"
-## is one press rather than a path read off a status line. Before anything has
-## been saved it falls back to where Save clip would offer to put one.
-func _on_open_folder() -> void:
-	var target := _last_saved
-	if target.is_empty() or not FileAccess.file_exists(target):
-		target = "res://"
-
-	var absolute := ProjectSettings.globalize_path(target)
-	if not (FileAccess.file_exists(target) or DirAccess.dir_exists_absolute(target)):
-		_set_message(_save_label, "%s is not there yet." % target)
-		return
-	if OS.shell_show_in_file_manager(absolute, true) != OK:
-		_set_message(_save_label, "Could not open %s." % absolute)
 
 
 func _save_dialog(default_path: String, on_selected: Callable) -> void:

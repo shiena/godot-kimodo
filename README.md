@@ -176,9 +176,10 @@ offers auto-mapping against a skeleton.
 **Save** retargets onto the Skeleton3D that Target resolved, and differs only
 in where the result goes: **Bake** puts it on an `AnimationPlayer` in the open
 scene, **Save clip** writes it as a standalone resource. Both name it after
-**Clip name**, and **Open folder** reveals the last file saved. Collecting clips
-into an `AnimationLibrary` is `KimodoLibrary`'s job from a script; the dock no
-longer offers it.
+**Clip name**. A saved file lands inside the project, so it is revealed in the
+FileSystem dock rather than in a file manager. Collecting clips into an
+`AnimationLibrary` is `KimodoLibrary`'s job from a script; the dock no longer
+offers it.
 
 Both need a Skeleton3D in the open scene, because the animation's track paths
 are that skeleton's path within it. A scene with no rig in it answers `No
