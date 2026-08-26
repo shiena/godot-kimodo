@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,8 +56,39 @@ def print_error(*values: object) -> None:
 
 
 KIMODO_SOURCE_DIR = "kimodo.cpp"
-KIMODO_BUILD_DIR = os.path.join(KIMODO_SOURCE_DIR, "build", "godot")
 KIMODO_PATCH_DIR = "patches"
+KIMODO_TOOLCHAIN_DIR = os.path.join("misc", "toolchains")
+
+
+def kimodo_build_dir(env) -> str:
+    """One build tree per target, so a native build and a cross build of the
+    same checkout do not overwrite each other's CMake cache."""
+    return os.path.join(KIMODO_SOURCE_DIR, "build", "godot-{}-{}".format(env["platform"], env["arch"]))
+
+
+def host_platform() -> str:
+    """What this machine is, in the names SCons uses for targets."""
+    if sys.platform in ("win32", "msys", "cygwin"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def cross_toolchain(env):
+    """The CMake toolchain file for building kimodo.cpp for another platform.
+
+    Empty when nothing is being crossed. KIMODO_CMAKE_TOOLCHAIN wins over the
+    bundled ones, so a setup this repository has not thought of needs no change
+    here.
+    """
+    if env["platform"] == host_platform():
+        return ""
+    explicit = os.environ.get("KIMODO_CMAKE_TOOLCHAIN", "")
+    if explicit:
+        return os.path.abspath(explicit)
+    bundled = os.path.join(KIMODO_TOOLCHAIN_DIR, "{}-{}.cmake".format(env["platform"], env["arch"]))
+    return os.path.abspath(bundled) if os.path.isfile(bundled) else ""
 
 
 def _visual_studio_roots() -> list:
@@ -92,7 +124,7 @@ def find_cmake():
     return None
 
 
-def kimodo_native_blockers() -> list:
+def kimodo_native_blockers(env) -> list:
     """What is missing before kimodo.cpp's CMake build can run, if anything.
 
     These are all "the toolchain is not installed" conditions rather than
@@ -106,8 +138,13 @@ def kimodo_native_blockers() -> list:
         missing.append("kimodo.cpp's ggml submodule (git submodule update --init --recursive kimodo.cpp)")
     if find_cmake() is None:
         missing.append("cmake 3.25 or newer")
+    # glslc compiles to SPIR-V, so the host's copy serves a cross build too.
     if shutil.which("glslc") is None and not os.environ.get("VULKAN_SDK"):
         missing.append("the Vulkan SDK, which supplies glslc for the GGML Vulkan shaders")
+    if env["platform"] != host_platform() and not cross_toolchain(env):
+        missing.append(
+            "a CMake toolchain for {}-{}; put one in {} or name it in KIMODO_CMAKE_TOOLCHAIN".format(
+                env["platform"], env["arch"], KIMODO_TOOLCHAIN_DIR))
     return missing
 
 
@@ -168,14 +205,15 @@ def build_kimodo_native(target, source, env):
     os.makedirs(destination, exist_ok=True)
     process_env = _cmake_environment(env)
     cmake = find_cmake()
+    build_dir = kimodo_build_dir(env)
     if not apply_kimodo_patches():
         return 1
 
-    if not os.path.isfile(os.path.join(KIMODO_BUILD_DIR, "CMakeCache.txt")):
+    if not os.path.isfile(os.path.join(build_dir, "CMakeCache.txt")):
         configure = [
             cmake,
             "-S", KIMODO_SOURCE_DIR,
-            "-B", KIMODO_BUILD_DIR,
+            "-B", build_dir,
             "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=Release",
             "-DKIMODO_BUILD_TESTS=OFF",
@@ -185,14 +223,22 @@ def build_kimodo_native(target, source, env):
             "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=" + destination,
             "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=" + destination,
         ]
-        print("Configuring kimodo.cpp in {} ...".format(KIMODO_BUILD_DIR))
+        toolchain = cross_toolchain(env)
+        if toolchain:
+            print("Cross-compiling kimodo.cpp with {}".format(toolchain))
+            configure.append("-DCMAKE_TOOLCHAIN_FILE=" + toolchain)
+        # Where the Vulkan headers, the loader import library and glslc are is
+        # the caller's business when they are not the host's own: shlex so a
+        # path with a space in it survives.
+        configure += shlex.split(os.environ.get("KIMODO_CMAKE_ARGS", ""))
+        print("Configuring kimodo.cpp in {} ...".format(build_dir))
         if subprocess.call(configure, env=process_env) != 0:
             print_error("kimodo.cpp failed to configure. Pass kimodo_native=no to build the addon without it.")
             return 1
 
     # Only this target: the fixture and parity executables link ggml-vulkan
     # unconditionally, and none of them is needed to generate a motion.
-    build = [cmake, "--build", KIMODO_BUILD_DIR, "--target", "kmd-generate"]
+    build = [cmake, "--build", build_dir, "--target", "kmd-generate"]
     print("Building kmd-generate ...")
     if subprocess.call(build, env=process_env) != 0:
         print_error("kmd-generate failed to build. Pass kimodo_native=no to build the addon without it.")

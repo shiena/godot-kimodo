@@ -1,87 +1,203 @@
-# For syntax, see https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
-# This workflow is triggered manually on the "Actions" tab on GitHub, and can be used to create releases.
+# Builds every target and publishes addons/kimodo as a release asset.
+# Run it by hand from the Actions tab, giving the version to cut.
+#
+# Everything is built on one Linux runner; the Windows side is crossed with
+# mingw-w64. See .github/actions/setup-cross-build for what that needs.
 
-name: Make a GDExtension build for every supported platform
+name: Release
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.2.0)'
+        required: true
+        type: string
 
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the version goes forward
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          LATEST=$(git tag -l 'v*' | sort -V | tail -n1)
+          if [ -z "$LATEST" ]; then
+            echo "No tags yet, so ${VERSION} is the first."
+            exit 0
+          fi
+          HIGHER=$(printf '%s\n%s' "${LATEST#v}" "$VERSION" | sort -V | tail -n1)
+          if [ "$HIGHER" = "${LATEST#v}" ]; then
+            echo "::error::${VERSION} is not above the latest tag ${LATEST}"
+            exit 1
+          fi
+          echo "${VERSION} is above ${LATEST}."
+
   build:
+    needs: [prepare]
+    name: ${{ matrix.target.platform }} ${{ matrix.target-type }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        # A build is made for every possible combination of parameters
-        # You can add or remove entries from the arrays of each parameter to customize which builds you want to run.
-        # See https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/running-variations-of-jobs-in-a-workflow
-        # Matches the platforms listed in project/bin/kimodo.gdextension, which
-        # are the ones kimodo.cpp itself supports.
+        # Matches the platforms in project/addons/kimodo/kimodo.gdextension,
+        # which are the ones kimodo.cpp itself supports.
         target:
           [
-            { platform: linux, arch: x86_64, os: ubuntu-22.04 },
-            { platform: windows, arch: x86_64, os: windows-latest },
+            { platform: linux, arch: x86_64 },
+            { platform: windows, arch: x86_64 },
           ]
         target-type: [template_debug, template_release]
         float-precision: [single]
 
-    runs-on: ${{ matrix.target.os }}
     steps:
-      # Clone this repository
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
 
-      # Setup dependencies
-      - name: Setup godot-cpp
-        uses: ./godot-cpp/.github/actions/setup-godot-cpp
+      - name: Setup Python and SCons
+        uses: actions/setup-python@v5
         with:
-          platform: ${{ matrix.target.platform }}
+          python-version: 3.x
+      - name: Install SCons
+        shell: bash
+        run: python -m pip install --upgrade scons
 
-      # Build GDExtension (with caches)
+      - name: Setup the cross build
+        uses: ./.github/actions/setup-cross-build
 
-      - name: Restore .scons_cache
-        uses: ./godot-cpp/.github/actions/godot-cache-restore
+      - name: Restore .scons-cache
+        uses: actions/cache@v4
         with:
-          scons-cache: ${{ github.workspace }}/.scons-cache/
-          cache-name: ${{ matrix.target.platform }}_${{ matrix.target.arch }}_${{ matrix.float-precision }}_${{ matrix.target-type }}
+          path: ${{ github.workspace }}/.scons-cache/
+          key: scons-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ matrix.target-type }}-${{ github.sha }}
+          restore-keys: |
+            scons-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ matrix.target-type }}-
 
-      - name: Build GDExtension Debug Build
-        shell: sh
+      - name: Restore the kimodo.cpp build tree
+        uses: actions/cache@v4
+        with:
+          path: kimodo.cpp/build/
+          key: kimodo-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ hashFiles('.git/modules/kimodo.cpp/HEAD', 'misc/toolchains/*.cmake', 'patches/*.patch') }}
+
+      - name: Build
+        shell: bash
         env:
           SCONS_CACHE: ${{ github.workspace }}/.scons-cache/
         run: |
-          scons target=${{ matrix.target-type }} platform=${{ matrix.target.platform }} arch=${{ matrix.target.arch }} precision=${{ matrix.float-precision }}
+          if [ "${{ matrix.target.platform }}" = "windows" ]; then
+            export KIMODO_CMAKE_ARGS="${KIMODO_WINDOWS_CMAKE_ARGS}"
+          fi
+          scons \
+            target=${{ matrix.target-type }} \
+            platform=${{ matrix.target.platform }} \
+            arch=${{ matrix.target.arch }} \
+            precision=${{ matrix.float-precision }}
 
-      - name: Save .scons_cache
-        uses: ./godot-cpp/.github/actions/godot-cache-save
-        with:
-          scons-cache: ${{ github.workspace }}/.scons-cache/
-          cache-name: ${{ matrix.target.platform }}_${{ matrix.target.arch }}_${{ matrix.float-precision }}_${{ matrix.target-type }}
-
-      # Clean up compilation files
-      - name: Windows - Delete compilation files
-        if: ${{ matrix.target.platform == 'windows' }}
-        shell: pwsh
+      - name: Drop what only the linker needed
+        shell: bash
         run: |
-          Remove-Item bin/* -Include *.exp,*.lib,*.pdb -Force
+          find project/addons/kimodo/bin -type f \
+            \( -name '*.exp' -o -name '*.lib' -o -name '*.pdb' -o -name '*.a' \) -delete
+          find project/addons/kimodo/bin -type f -printf '%10s  %p\n' | sort -k2
 
-      # Upload the build
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godot-kimodo-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ matrix.float-precision }}-${{ matrix.target-type }}
-          path: |
-            ${{ github.workspace }}/bin/**
+          name: kimodo-bin-${{ matrix.target.platform }}-${{ matrix.target.arch }}-${{ matrix.target-type }}
+          path: project/addons/kimodo/bin
+          if-no-files-found: error
 
-  # Merges all the build artifacts together into a single godot-kimodo artifact.
-  # If you comment out this step, all the builds will be uploaded individually.
-  merge:
-    runs-on: ubuntu-22.04
-    needs: build
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - name: Merge Artifacts
-        uses: actions/upload-artifact/merge@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          name: godot-kimodo
-          pattern: godot-kimodo-*
-          delete-merged: true
+          fetch-depth: 0
+
+      - name: Download every build
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: kimodo-bin-*
+
+      - name: Assemble addons/kimodo
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          sed -i "s/^version=\".*\"/version=\"${VERSION}\"/" project/addons/kimodo/plugin.cfg
+          cat project/addons/kimodo/plugin.cfg
+
+          # A top-level folder holding addons/, which is the shape the asset
+          # library and a plain unzip-into-the-project both expect.
+          mkdir -p godot-kimodo/addons
+          cp -r project/addons/kimodo godot-kimodo/addons/
+          mkdir -p godot-kimodo/addons/kimodo/bin
+          # Every build wrote into bin/<platform>/, so the four of them merge.
+          for built in artifacts/kimodo-bin-*/; do
+            cp -r "${built}"* godot-kimodo/addons/kimodo/bin/
+          done
+
+          echo "What ships:"
+          find godot-kimodo -type f -printf '%10s  %p\n' | sort -k2
+
+          # Both platforms have to be in it, or the extension fails to load for
+          # half the people who download it.
+          for platform in linux windows; do
+            if ! find "godot-kimodo/addons/kimodo/bin/${platform}" -name '*kimodo*' -print -quit | grep -q .; then
+              echo "::error::no ${platform} library in the archive"
+              exit 1
+            fi
+          done
+
+          zip -qr "godot-kimodo-v${VERSION}.zip" godot-kimodo/
+          ls -l "godot-kimodo-v${VERSION}.zip"
+
+      - name: Record the version and tag it
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Only plugin.cfg: built libraries stay out of the repository and
+          # reach people through the release asset instead.
+          git add project/addons/kimodo/plugin.cfg
+          git commit -m "Release v${VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            "godot-kimodo-v${VERSION}.zip"
+
+      - name: Delete the intermediate artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: kimodo-bin-*

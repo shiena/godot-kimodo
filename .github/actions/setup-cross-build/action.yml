@@ -1,0 +1,77 @@
+name: Set up the cross build
+description: >
+  Everything both targets are built with, on the one Linux runner. mingw-w64
+  crosses to Windows, the LunarG SDK supplies glslc and the Vulkan headers, and
+  a Windows import library for the loader is made here because nobody ships one
+  for mingw.
+
+inputs:
+  lunarg-release:
+    description: Which LunarG apt list to take the SDK from. Must match the runner.
+    required: false
+    default: noble
+
+runs:
+  using: composite
+  steps:
+    - name: Install the toolchains
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ninja-build \
+          mingw-w64 \
+          libgl1-mesa-dev libglu1-mesa-dev \
+          libvulkan-dev
+
+    - name: Install the Vulkan SDK
+      shell: bash
+      run: |
+        # LunarG's apt repository rather than the SDK tarball: the tarball
+        # carries the source of every validation layer, and all that is wanted
+        # here is glslc, the headers and the SPIRV-Headers CMake config.
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+          | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc > /dev/null
+        sudo wget -qO "/etc/apt/sources.list.d/lunarg-vulkan-${{ inputs.lunarg-release }}.list" \
+          "https://packages.lunarg.com/vulkan/lunarg-vulkan-${{ inputs.lunarg-release }}.list"
+        sudo apt-get update
+        # The three that are actually wanted, falling back to the metapackage
+        # rather than failing a release over a package rename upstream.
+        sudo apt-get install -y vulkan-headers shaderc spirv-headers           || sudo apt-get install -y vulkan-sdk
+        echo "glslc: $(command -v glslc)"
+        glslc --version | head -2
+
+    - name: Stage the Windows Vulkan side
+      shell: bash
+      run: |
+        set -euo pipefail
+        STAGE="${GITHUB_WORKSPACE}/.cross/windows"
+        mkdir -p "${STAGE}/include" "${STAGE}/lib"
+
+        # Copied rather than pointed at /usr/include, which would put the
+        # host's libc headers on a mingw compiler's include path.
+        cp -r /usr/include/vulkan "${STAGE}/include/"
+        cp -r /usr/include/vk_video "${STAGE}/include/"
+
+        # ggml-vulkan sets VULKAN_HPP_DISPATCH_LOADER_DYNAMIC, so the only
+        # symbol it needs at link time is the one the dispatcher is seeded
+        # with. The rest are here because they cost nothing and a loader
+        # exports them all anyway.
+        cat > "${STAGE}/vulkan-1.def" <<'DEF'
+        LIBRARY vulkan-1.dll
+        EXPORTS
+        vkGetInstanceProcAddr
+        vkGetDeviceProcAddr
+        vkCreateInstance
+        vkEnumerateInstanceExtensionProperties
+        vkEnumerateInstanceLayerProperties
+        vkEnumerateInstanceVersion
+        DEF
+        x86_64-w64-mingw32-dlltool \
+          -d "${STAGE}/vulkan-1.def" -D vulkan-1.dll -l "${STAGE}/lib/libvulkan-1.a"
+        ls -l "${STAGE}/lib/libvulkan-1.a"
+
+        # Read by methods.py when the target platform is not this machine.
+        {
+          echo "KIMODO_WINDOWS_CMAKE_ARGS=-DVulkan_INCLUDE_DIR=${STAGE}/include -DVulkan_LIBRARY=${STAGE}/lib/libvulkan-1.a -DVulkan_GLSLC_EXECUTABLE=$(command -v glslc)"
+        } >> "${GITHUB_ENV}"

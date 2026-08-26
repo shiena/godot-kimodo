@@ -82,9 +82,11 @@ git submodule update --init --recursive
 scons
 ```
 
-The build writes `project/bin/windows/` or `project/bin/linux/`, which is where
-`project/bin/kimodo.gdextension` looks. The editor dock is GDScript under
-`project/addons/kimodo/`, so it needs no build of its own.
+The build writes `project/addons/kimodo/bin/<platform>/`, which is where
+`project/addons/kimodo/kimodo.gdextension` looks. Everything lives inside the
+addon so that `addons/kimodo` is the whole of what ships and the whole of what
+someone copies into a project of their own. The dock itself is GDScript, so it
+needs no build.
 
 ### kmd-generate
 
@@ -128,6 +130,32 @@ pinned revision is still what the submodule points at.
 Only x86_64 Linux and Windows are listed in the `.gdextension`, because those are
 the platforms kimodo.cpp itself supports: it needs a C++23 compiler and the GGML
 Vulkan backend, and its 8B LLM2Vec text encoder needs desktop-class VRAM.
+
+### Cross-compiling, and what CI does
+
+Both are built on one Linux runner, Windows through mingw-w64, so there is a
+single container to keep working and one place the Vulkan SDK is installed.
+Building for a platform this machine is not picks up
+`misc/toolchains/<platform>-<arch>.cmake`, or whatever `KIMODO_CMAKE_TOOLCHAIN`
+names, and appends `KIMODO_CMAKE_ARGS` to the CMake configure line. Each target
+gets its own build tree under `kimodo.cpp/build/`, so a native build and a cross
+build of the same checkout do not fight over one CMake cache.
+
+Two things have to be handed to the cross build, and
+`.github/actions/setup-cross-build` is where that happens. `glslc` emits SPIR-V
+and so does not care what it is compiling for, meaning the host's copy serves;
+ggml notices `CMAKE_CROSSCOMPILING` and builds its shader generator for the host
+by itself. The Vulkan loader is the awkward one, because nobody ships an import
+library for mingw. One is made on the spot with `dlltool` from a six-line `.def`:
+ggml-vulkan sets `VULKAN_HPP_DISPATCH_LOADER_DYNAMIC`, so `vkGetInstanceProcAddr`
+is the only symbol it needs at link time and everything else is resolved through
+the dispatcher at runtime.
+
+`ci.yml` builds both targets on every push. `make_build.yml` is run by hand with
+a version, builds both target types as well, assembles `addons/kimodo` with all
+four libraries in it, and publishes that as a zip on a GitHub release. Only
+`plugin.cfg` is committed by it: built libraries stay out of the repository and
+reach people through the release asset.
 
 ## The dock
 
