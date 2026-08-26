@@ -1,8 +1,7 @@
 #include "kimodo_retarget.h"
 
-#include "kimodo_smplx.h"
 #include "mannequin.h"
-#include "smplx22.h"
+#include "skeletons.h"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/error_macros.hpp>
@@ -19,7 +18,12 @@ using namespace godot;
 
 namespace {
 
-constexpr int JOINTS = smplx22::JOINT_COUNT;
+// A skeleton key names one of the three tables. Anything else is a mistake in
+// the caller rather than a state to cope with, so it is refused instead of
+// quietly retargeting as SMPL-X.
+const skeletons::Definition *lookup(const String &p_key) {
+	return skeletons::by_key(p_key.utf8().get_data());
+}
 
 // Bone indices ordered so that a parent always precedes its children. Godot
 // does not promise that plain index order has that property.
@@ -48,15 +52,17 @@ std::vector<int> hierarchy_order(Skeleton3D *p_skeleton) {
 // Vertical extent of the joints both skeletons agree on. Comparing only the
 // mapped joints keeps a rig without toes from being measured against a source
 // that has them.
-bool mapped_extent(Skeleton3D *p_skeleton, const PackedInt32Array &p_bones, double &r_source, double &r_target) {
-	const PackedVector3Array source_rest = KimodoSmplx::get_rest_positions();
+bool mapped_extent(Skeleton3D *p_skeleton, const skeletons::Definition &p_definition,
+				   const PackedInt32Array &p_bones, double &r_source, double &r_target) {
+	Vector3 source_rest[skeletons::MAX_JOINTS];
+	skeletons::rest_positions(p_definition, source_rest);
 	real_t source_low = 0.0f;
 	real_t source_high = 0.0f;
 	real_t target_low = 0.0f;
 	real_t target_high = 0.0f;
 	bool any = false;
 
-	for (int joint = 0; joint < JOINTS; ++joint) {
+	for (int joint = 0; joint < p_definition.joint_count; ++joint) {
 		if (p_bones[joint] < 0) {
 			continue;
 		}
@@ -82,26 +88,41 @@ bool mapped_extent(Skeleton3D *p_skeleton, const PackedInt32Array &p_bones, doub
 } // namespace
 
 void KimodoRetarget::_bind_methods() {
-	ClassDB::bind_static_method("KimodoRetarget", D_METHOD("resolve_bones", "skeleton", "bone_map"),
-								&KimodoRetarget::resolve_bones);
-	ClassDB::bind_static_method("KimodoRetarget", D_METHOD("describe_mapping", "skeleton", "bone_map"),
-								&KimodoRetarget::describe_mapping);
-	ClassDB::bind_static_method("KimodoRetarget", D_METHOD("get_scale", "skeleton", "bone_map"),
-								&KimodoRetarget::get_scale);
+	ClassDB::bind_static_method("KimodoRetarget",
+								D_METHOD("resolve_bones", "skeleton", "bone_map", "skeleton_key"),
+								&KimodoRetarget::resolve_bones, DEFVAL("smplx22"));
+	ClassDB::bind_static_method("KimodoRetarget",
+								D_METHOD("describe_mapping", "skeleton", "bone_map", "skeleton_key"),
+								&KimodoRetarget::describe_mapping, DEFVAL("smplx22"));
+	ClassDB::bind_static_method("KimodoRetarget",
+								D_METHOD("get_scale", "skeleton", "bone_map", "skeleton_key"),
+								&KimodoRetarget::get_scale, DEFVAL("smplx22"));
 	ClassDB::bind_static_method("KimodoRetarget",
 								D_METHOD("bake_animation", "motion", "skeleton", "bone_map", "skeleton_path"),
 								&KimodoRetarget::bake_animation);
-	ClassDB::bind_static_method("KimodoRetarget", D_METHOD("build_mannequin", "skeleton", "bone_map", "owner"),
-								&KimodoRetarget::build_mannequin);
+	ClassDB::bind_static_method("KimodoRetarget",
+								D_METHOD("build_mannequin", "skeleton", "bone_map", "owner", "skeleton_key"),
+								&KimodoRetarget::build_mannequin, DEFVAL("smplx22"));
 }
 
-PackedInt32Array KimodoRetarget::resolve_bones(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map) {
+PackedInt32Array KimodoRetarget::resolve_bones(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map,
+											   const String &p_skeleton_key) {
 	PackedInt32Array out;
 	ERR_FAIL_NULL_V(p_skeleton, out);
-	out.resize(JOINTS);
+	const skeletons::Definition *definition = lookup(p_skeleton_key);
+	ERR_FAIL_NULL_V_MSG(definition, out, vformat("KimodoRetarget: no skeleton called %s.", p_skeleton_key));
+	out.resize(definition->joint_count);
 
-	for (int joint = 0; joint < JOINTS; ++joint) {
-		const StringName profile_bone(smplx22::HUMANOID_NAME[joint]);
+	for (int joint = 0; joint < definition->joint_count; ++joint) {
+		// A joint the humanoid profile has no slot for is not a mapping that
+		// failed. G1 spends three single-axis joints on each hip, and only the
+		// last of them is the thigh a rig would name.
+		const char *humanoid = definition->humanoid_name[joint];
+		if (humanoid[0] == 0) {
+			out[joint] = -1;
+			continue;
+		}
+		const StringName profile_bone(humanoid);
 		const String bone_name = p_bone_map.is_valid()
 				? String(p_bone_map->get_skeleton_bone_name(profile_bone))
 				: String(profile_bone);
@@ -110,42 +131,58 @@ PackedInt32Array KimodoRetarget::resolve_bones(Skeleton3D *p_skeleton, const Ref
 	return out;
 }
 
-Dictionary KimodoRetarget::describe_mapping(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map) {
+Dictionary KimodoRetarget::describe_mapping(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map,
+											const String &p_skeleton_key) {
 	Dictionary out;
 	ERR_FAIL_NULL_V(p_skeleton, out);
+	const skeletons::Definition *definition = lookup(p_skeleton_key);
+	ERR_FAIL_NULL_V_MSG(definition, out, vformat("KimodoRetarget: no skeleton called %s.", p_skeleton_key));
 
-	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map);
+	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map, p_skeleton_key);
 	PackedStringArray mapped;
 	PackedStringArray missing;
-	for (int joint = 0; joint < JOINTS; ++joint) {
+	int reachable = 0;
+	for (int joint = 0; joint < definition->joint_count; ++joint) {
+		const char *humanoid = definition->humanoid_name[joint];
+		if (humanoid[0] == 0) {
+			continue;
+		}
+		++reachable;
 		if (bones[joint] < 0) {
-			missing.append(String(smplx22::HUMANOID_NAME[joint]));
+			missing.append(String(humanoid));
 		} else {
-			mapped.append(vformat("%s -> %s", smplx22::HUMANOID_NAME[joint],
-								  p_skeleton->get_bone_name(bones[joint])));
+			mapped.append(vformat("%s -> %s", humanoid, p_skeleton->get_bone_name(bones[joint])));
 		}
 	}
 
 	double source_height = 0.0;
 	double target_height = 0.0;
-	mapped_extent(p_skeleton, bones, source_height, target_height);
+	mapped_extent(p_skeleton, *definition, bones, source_height, target_height);
 
 	out["bones"] = bones;
 	out["mapped"] = mapped;
 	out["missing"] = missing;
+	// How many joints a humanoid rig could carry at best, which is what a
+	// "mapped 20 of 22" line has to be counted against. G1 reaches 13 of 34.
+	out["reachable"] = reachable;
+	out["skeleton"] = String(definition->key);
+	out["skeleton_label"] = String(definition->label);
 	out["source_height"] = source_height;
 	out["target_height"] = target_height;
-	out["scale"] = get_scale(p_skeleton, p_bone_map);
+	out["scale"] = get_scale(p_skeleton, p_bone_map, p_skeleton_key);
 	return out;
 }
 
-double KimodoRetarget::get_scale(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map) {
+double KimodoRetarget::get_scale(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map,
+								 const String &p_skeleton_key) {
 	ERR_FAIL_NULL_V(p_skeleton, 1.0);
+	const skeletons::Definition *definition = lookup(p_skeleton_key);
+	ERR_FAIL_NULL_V_MSG(definition, 1.0, vformat("KimodoRetarget: no skeleton called %s.", p_skeleton_key));
 
-	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map);
+	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map, p_skeleton_key);
 	double source_height = 0.0;
 	double target_height = 0.0;
-	if (!mapped_extent(p_skeleton, bones, source_height, target_height)) {
+	if (!mapped_extent(p_skeleton, *definition, bones, source_height, target_height)) {
 		return 1.0;
 	}
 	if (source_height <= CMP_EPSILON || target_height <= CMP_EPSILON) {
@@ -162,13 +199,18 @@ Ref<Animation> KimodoRetarget::bake_animation(const Ref<KimodoMotion> &p_motion,
 	const int frames = p_motion->get_frame_count();
 	ERR_FAIL_COND_V_MSG(frames <= 0, Ref<Animation>(), "KimodoRetarget: the motion has no frames.");
 
-	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map);
+	// The clip decides the skeleton. It was recognised from the shape of the
+	// files kmd-generate wrote, so nothing here has to be told which model ran.
+	const skeletons::Definition &definition = p_motion->get_skeleton();
+	const String skeleton_key = String(definition.key);
+	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map, skeleton_key);
 	ERR_FAIL_COND_V_MSG(bones[0] < 0, Ref<Animation>(),
 						"KimodoRetarget: Hips did not resolve; without it there is nothing to anchor the motion to.");
 
 	const int bone_count = p_skeleton->get_bone_count();
+	const int joints = definition.joint_count;
 	std::vector<int> joint_of_bone(bone_count, -1);
-	for (int joint = 0; joint < JOINTS; ++joint) {
+	for (int joint = 0; joint < joints; ++joint) {
 		if (bones[joint] >= 0) {
 			joint_of_bone[bones[joint]] = joint;
 		}
@@ -190,8 +232,8 @@ Ref<Animation> KimodoRetarget::bake_animation(const Ref<KimodoMotion> &p_motion,
 	animation->set_loop_mode(Animation::LOOP_NONE);
 
 	const String base = String(p_skeleton_path);
-	std::vector<int> track_of_joint(JOINTS, -1);
-	for (int joint = 0; joint < JOINTS; ++joint) {
+	std::vector<int> track_of_joint(joints, -1);
+	for (int joint = 0; joint < joints; ++joint) {
 		if (bones[joint] < 0) {
 			continue;
 		}
@@ -212,16 +254,16 @@ Ref<Animation> KimodoRetarget::bake_animation(const Ref<KimodoMotion> &p_motion,
 	const int hips_parent = p_skeleton->get_bone_parent(bones[0]);
 	const Transform3D hips_parent_inverse =
 			hips_parent < 0 ? Transform3D() : p_skeleton->get_bone_global_rest(hips_parent).affine_inverse();
-	const double scale = get_scale(p_skeleton, p_bone_map);
+	const double scale = get_scale(p_skeleton, p_bone_map, skeleton_key);
 
-	std::vector<Quaternion> motion_global(JOINTS);
+	std::vector<Quaternion> motion_global(joints);
 	std::vector<Quaternion> pose_global(bone_count);
 	for (int frame = 0; frame < frames; ++frame) {
 		const double time = frame / fps;
 
-		for (int joint = 0; joint < JOINTS; ++joint) {
+		for (int joint = 0; joint < joints; ++joint) {
 			const Quaternion local = p_motion->get_local_rotation(frame, joint);
-			const int parent = smplx22::PARENT[joint];
+			const int parent = definition.parent[joint];
 			motion_global[joint] = parent < 0 ? local : motion_global[parent] * local;
 		}
 
@@ -236,7 +278,7 @@ Ref<Animation> KimodoRetarget::bake_animation(const Ref<KimodoMotion> &p_motion,
 			}
 		}
 
-		for (int joint = 0; joint < JOINTS; ++joint) {
+		for (int joint = 0; joint < joints; ++joint) {
 			if (track_of_joint[joint] < 0) {
 				continue;
 			}
@@ -254,25 +296,29 @@ Ref<Animation> KimodoRetarget::bake_animation(const Ref<KimodoMotion> &p_motion,
 	return animation;
 }
 
-void KimodoRetarget::build_mannequin(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map, Node *p_owner) {
+void KimodoRetarget::build_mannequin(Skeleton3D *p_skeleton, const Ref<BoneMap> &p_bone_map, Node *p_owner,
+									 const String &p_skeleton_key) {
 	ERR_FAIL_NULL(p_skeleton);
+	const skeletons::Definition *definition = lookup(p_skeleton_key);
+	ERR_FAIL_NULL_MSG(definition, vformat("KimodoRetarget: no skeleton called %s.", p_skeleton_key));
 
-	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map);
-	const double scale = get_scale(p_skeleton, p_bone_map);
+	const PackedInt32Array bones = resolve_bones(p_skeleton, p_bone_map, p_skeleton_key);
+	const double scale = get_scale(p_skeleton, p_bone_map, p_skeleton_key);
 
 	mannequin::Style style;
 	style.radius.resize(p_skeleton->get_bone_count());
 	style.side.resize(p_skeleton->get_bone_count());
 	style.radius.fill(0.0f);
 	style.side.fill(mannequin::SIDE_CENTER);
-	for (int joint = 0; joint < JOINTS; ++joint) {
+	for (int joint = 0; joint < definition->joint_count; ++joint) {
 		if (bones[joint] < 0) {
 			continue;
 		}
-		style.radius[bones[joint]] = smplx22::LIMB_RADIUS[joint] * scale;
-		style.side[bones[joint]] = smplx22::SIDE[joint];
+		style.radius[bones[joint]] = definition->limb_radius[joint] * scale;
+		style.side[bones[joint]] = definition->side[joint];
 	}
-	style.head_bone = bones[15];
+	// G1 stops at the waist, so there is no head to put a sphere on.
+	style.head_bone = definition->head_joint < 0 ? -1 : bones[definition->head_joint];
 	style.tip_radius = 0.036f * scale;
 	style.scale = scale;
 	mannequin::build(p_skeleton, style, p_owner);

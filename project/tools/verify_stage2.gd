@@ -25,6 +25,7 @@ func _initialize() -> void:
 
 	_check_humanoid_skeleton()
 	_check_humanoid_mapping()
+	_check_other_skeletons_map()
 	_check_rest_is_recovered(motion)
 	_check_sides_survive(motion)
 	_check_custom_rig(motion)
@@ -39,12 +40,12 @@ func _initialize() -> void:
 func _check_humanoid_skeleton() -> void:
 	var profile := SkeletonProfileHumanoid.new()
 	var unknown := PackedStringArray()
-	for profile_bone in KimodoSmplx.get_humanoid_bone_names():
+	for profile_bone in KimodoSkeleton.get_humanoid_bone_names():
 		if profile.find_bone(profile_bone) < 0:
 			unknown.append(profile_bone)
 	_expect(unknown.is_empty(), "every mapped name is a real profile bone (%s)" % [unknown])
 
-	var skeleton := KimodoSmplx.create_humanoid_skeleton()
+	var skeleton := KimodoSkeleton.create_humanoid_skeleton()
 	_expect(skeleton.get_bone_count() == 22, "the humanoid skeleton carries the 22 drivable bones")
 	_expect(skeleton.get_bone_name(0) == "Hips", "bone 0 is Hips")
 	_expect(skeleton.get_bone_parent(skeleton.find_bone("LeftLowerArm")) == skeleton.find_bone("LeftUpperArm"),
@@ -59,16 +60,44 @@ func _check_humanoid_skeleton() -> void:
 
 
 func _check_humanoid_mapping() -> void:
-	var skeleton := KimodoSmplx.create_humanoid_skeleton()
+	var skeleton := KimodoSkeleton.create_humanoid_skeleton()
 	var report := KimodoRetarget.describe_mapping(skeleton, null)
 	_expect(report["missing"].is_empty(),
 			"all 22 joints resolve by profile name (missing %s)" % [report["missing"]])
 	_expect(report["mapped"].size() == 22, "22 joints mapped")
 	_expect(absf(report["scale"] - 1.0) < 0.001,
 			"the default target is SMPL-X sized, so the scale is 1 (%.3f)" % report["scale"])
-	_expect(absf(report["source_height"] - KimodoSmplx.get_rest_height()) < 0.001,
+	_expect(absf(report["source_height"] - KimodoSkeleton.get_rest_height()) < 0.001,
 			"with every joint mapped the source height is the full SMPL-X extent")
 	skeleton.free()
+
+
+## SOMA and G1 have to reach a humanoid rig too, and the count they are judged
+## against is what the profile can carry rather than how many joints they have.
+## G1 spends most of its on single axes no rig gives a bone to.
+func _check_other_skeletons_map() -> void:
+	for key in ["soma30", "g1skel34"]:
+		var skeleton := KimodoSkeleton.create_humanoid_skeleton(key)
+		_expect(skeleton.get_bone_count() == KimodoSkeleton.get_joint_count(key),
+				"%s builds a bone per joint" % key)
+
+		var report := KimodoRetarget.describe_mapping(skeleton, null, key)
+		_expect(report["skeleton"] == key, "%s reports itself (got %s)" % [key, report["skeleton"]])
+		_expect(report["reachable"] > 0 and report["reachable"] < KimodoSkeleton.get_joint_count(key),
+				"%s reaches some of its joints but not all (%d of %d)"
+						% [key, report["reachable"], KimodoSkeleton.get_joint_count(key)])
+		_expect(report["missing"].is_empty(),
+				"%s resolves every reachable joint by profile name (missing %s)" % [key, report["missing"]])
+		_expect(report["mapped"].size() == report["reachable"],
+				"%s maps all %d of them" % [key, report["reachable"]])
+		_expect(absf(report["scale"] - 1.0) < 0.05,
+				"%s retargets onto its own rest at about 1:1 (%.3f)" % [key, report["scale"]])
+
+		# The scale is measured over mapped joints only, so a skeleton whose
+		# root is not the lowest bone would otherwise report a negative height.
+		_expect(report["source_height"] > 0.5,
+				"%s source extent is a body height (%.3f)" % [key, report["source_height"]])
+		skeleton.free()
 
 
 ## The correction collapses to the target's own rest when the motion contributes
@@ -77,7 +106,7 @@ func _check_humanoid_mapping() -> void:
 func _check_rest_is_recovered(motion: KimodoMotion) -> void:
 	var stage := Node3D.new()
 	get_root().add_child(stage)
-	var skeleton := KimodoSmplx.create_humanoid_skeleton()
+	var skeleton := KimodoSkeleton.create_humanoid_skeleton()
 	stage.add_child(skeleton)
 
 	_play(stage, skeleton, KimodoRetarget.bake_animation(motion, skeleton, null, NodePath(skeleton.name)), 0)
@@ -102,7 +131,7 @@ func _check_rest_is_recovered(motion: KimodoMotion) -> void:
 func _check_sides_survive(motion: KimodoMotion) -> void:
 	var stage := Node3D.new()
 	get_root().add_child(stage)
-	var skeleton := KimodoSmplx.create_humanoid_skeleton()
+	var skeleton := KimodoSkeleton.create_humanoid_skeleton()
 	stage.add_child(skeleton)
 
 	_play(stage, skeleton, KimodoRetarget.bake_animation(motion, skeleton, null, NodePath(skeleton.name)),
@@ -150,7 +179,7 @@ func _check_custom_rig(motion: KimodoMotion) -> void:
 	var bones := KimodoRetarget.resolve_bones(skeleton, bone_map)
 	var worst := 0.0
 	var worst_joint := ""
-	for joint in KimodoSmplx.get_joint_count():
+	for joint in KimodoSkeleton.get_joint_count():
 		if bones[joint] < 0:
 			continue
 		var expected: Quaternion = motion.get_global_rotation(PEAK_FRAME, joint) \
@@ -159,7 +188,7 @@ func _check_custom_rig(motion: KimodoMotion) -> void:
 		var drift: float = actual.angle_to(expected)
 		if drift > worst:
 			worst = drift
-			worst_joint = KimodoSmplx.get_joint_names()[joint]
+			worst_joint = KimodoSkeleton.get_joint_names()[joint]
 	_expect(worst < 0.001,
 			"every mapped bone lands on D[j] * G[j], twist bone included (worst %s, %.4f rad)"
 			% [worst_joint, worst])
@@ -216,7 +245,7 @@ func _build_custom_rig() -> Skeleton3D:
 func _build_custom_bone_map() -> BoneMap:
 	var bone_map := BoneMap.new()
 	bone_map.profile = SkeletonProfileHumanoid.new()
-	for profile_bone in KimodoSmplx.get_humanoid_bone_names():
+	for profile_bone in KimodoSkeleton.get_humanoid_bone_names():
 		if profile_bone in ["LeftToes", "RightToes"]:
 			continue
 		bone_map.set_skeleton_bone_name(profile_bone, "rig_" + profile_bone)

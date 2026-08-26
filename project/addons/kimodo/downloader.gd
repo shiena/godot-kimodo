@@ -23,6 +23,7 @@ var _busy := false
 
 var _current_part := ""
 var _current_bytes := 0
+var _current_item_bytes := 0
 var _done_bytes := 0
 var _total_bytes := 0
 var _current_label := ""
@@ -43,14 +44,24 @@ func cancel() -> void:
 func run(destination: String, repos: Array, token: String, reverify: bool) -> void:
 	if _busy:
 		return
+	_begin()
+	var message := await _run(destination, repos, token, reverify)
+	_end(message, "The bundle is complete and verified.")
+
+
+## Split out so that anything else built on this plumbing reports the same way.
+## checkpoint.gd fetches a repository with no manifest and then runs a
+## converter, and neither of those is a bundle.
+func _begin() -> void:
 	_busy = true
 	_cancelled = false
 	_done_bytes = 0
 	_total_bytes = 0
 
-	var message := await _run(destination, repos, token, reverify)
+
+func _end(message: String, success: String) -> void:
 	_busy = false
-	finished.emit(message.is_empty(), message if not message.is_empty() else "The bundle is complete and verified.")
+	finished.emit(message.is_empty(), message if not message.is_empty() else success)
 
 
 func _run(destination: String, repos: Array, token: String, reverify: bool) -> String:
@@ -58,12 +69,18 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 		return "curl was not found on PATH. It ships with Windows 10 and later, macOS and most Linux distributions."
 
 	var work := []
+	# A repository that will not hand over its manifest costs its own files and
+	# no others. Returning here instead would mean one withdrawn publication
+	# holds back the gigabytes the rest of them still serve, and the person
+	# waiting on those gigabytes can do nothing about the withdrawal.
+	var refused := PackedStringArray()
 	for spec in repos:
 		var manifest := await _fetch_manifest(spec["repo"], spec["revision"], token)
-		if manifest.has("error"):
-			return manifest["error"]
 		if _cancelled:
 			return "Cancelled."
+		if manifest.has("error"):
+			refused.append(manifest["error"])
+			continue
 
 		for entry in manifest["files"]:
 			var relative := String(entry.get("path", ""))
@@ -81,6 +98,8 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 			})
 
 	if work.is_empty():
+		if not refused.is_empty():
+			return " ".join(refused)
 		return "The manifests listed nothing matching the expected layout."
 
 	for item in work:
@@ -94,18 +113,21 @@ func _run(destination: String, repos: Array, token: String, reverify: bool) -> S
 			return error
 		_done_bytes += item["bytes"]
 
-	return ""
+	return " ".join(refused)
 
 
 func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 	var path: String = item["path"]
 	var label: String = item["label"]
 
+	_current_item_bytes = item["bytes"]
+
 	if _is_present(path, item["bytes"]):
 		if not reverify:
 			return ""
 		_current_label = "verifying %s" % label
-		if _sha256(path) == item["sha256"]:
+		_current_bytes = item["bytes"]
+		if await _sha256(path) == item["sha256"]:
 			return ""
 		DirAccess.remove_absolute(path)
 
@@ -117,22 +139,33 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 	for attempt in 2:
 		if attempt == 1:
 			DirAccess.remove_absolute(part)
-		_current_label = "%s (%.1f MB)" % [label, item["bytes"] / 1048576.0]
-		var code := await _curl(_download_args(item["url"], part, token), part)
+		_current_label = label
+		var code := await _run_process("curl", _download_args(item["url"], part, token), part)
 		if _cancelled:
 			return "Cancelled."
 		if code != 0:
 			return "curl exited with %d while fetching %s." % [code, label]
 
+		# A repository that publishes no hashes leaves the transfer itself as
+		# the only check there is. Comparing against an empty string would fail
+		# every file rather than admit that.
+		if String(item["sha256"]).is_empty():
+			return _publish(part, path, label)
+
 		_current_label = "verifying %s" % label
-		if _sha256(part) == item["sha256"]:
-			DirAccess.remove_absolute(path)
-			var moved := DirAccess.rename_absolute(part, path)
-			if moved != OK:
-				return "Cannot move %s into place (%d)." % [label, moved]
-			return ""
+		_current_bytes = item["bytes"]
+		if await _sha256(part) == item["sha256"]:
+			return _publish(part, path, label)
 
 	return "%s failed its checksum twice. The published file may have changed." % label
+
+
+func _publish(part: String, path: String, label: String) -> String:
+	DirAccess.remove_absolute(path)
+	var moved := DirAccess.rename_absolute(part, path)
+	if moved != OK:
+		return "Cannot move %s into place (%d)." % [label, moved]
+	return ""
 
 
 func _download_args(url: String, part: String, token: String) -> PackedStringArray:
@@ -163,7 +196,7 @@ func _fetch_manifest(repo: String, revision: String, token: String) -> Dictionar
 		args.append_array(PackedStringArray(["--header", "Authorization: Bearer " + token]))
 	args.append(_blob_url(repo, revision, MANIFEST_NAME))
 
-	var code := await _curl(args, "")
+	var code := await _run_process("curl", args, "")
 	if code != 0:
 		return {"error": "Cannot read the manifest of %s at %s (curl %d)." % [repo, revision, code]}
 
@@ -179,10 +212,14 @@ func _fetch_manifest(repo: String, revision: String, token: String) -> Dictionar
 	return {"files": parsed.get("files", [])}
 
 
-func _curl(args: PackedStringArray, watched_part: String) -> int:
+## Runs a child and reports what it writes while it does. curl is the usual
+## caller; the SMPL-X converter is the other one, and it is watched the same
+## way because a separate process offers no progress but the file it is
+## filling.
+func _run_process(program: String, args: PackedStringArray, watched_part: String) -> int:
 	_current_part = watched_part
 	_current_bytes = 0
-	_pid = OS.create_process("curl", args, false)
+	_pid = OS.create_process(program, args, false)
 	if _pid < 0:
 		return -1
 
@@ -203,20 +240,44 @@ func _curl(args: PackedStringArray, watched_part: String) -> int:
 ## Polled from the wait loop rather than from _process, so the downloader does
 ## not need to be inside the scene tree to report anything.
 func _emit_progress() -> void:
+	var text := _current_label
+	# One layer is 2.9% of the bundle and a 441 MB file takes minutes, so
+	# the bar alone leaves a working download looking like a stalled one.
+	# The count moves every second and settles the question.
 	if not _current_part.is_empty():
 		_current_bytes = maxi(0, _file_size(_current_part))
+		if _current_item_bytes > 0:
+			text = "%s  %d of %d MB" % [_current_label,
+					_current_bytes / 1048576, _current_item_bytes / 1048576]
 	var ratio := 0.0
 	if _total_bytes > 0:
 		ratio = clampf(float(_done_bytes + _current_bytes) / float(_total_bytes), 0.0, 1.0)
-	progress.emit(_current_label, ratio)
+	progress.emit(text, ratio)
 
 
 # --- helpers -----------------------------------------------------------------
 
 
 func _has_curl() -> bool:
-	var output := []
-	return OS.execute("curl", ["--version"], output, false) == 0
+	return not on_path("curl").is_empty()
+
+
+## Where a program is on PATH, or an empty string.
+##
+## OS.execute() logs a red engine error with a backtrace for a program that is
+## not there, so asking after something absent by running it answers a question
+## with what reads as a fault. Looking for the SMPL-X interpreter tries three
+## names and would print three of them. Walking PATH answers the same question
+## and says nothing.
+static func on_path(name: String) -> String:
+	var windows := OS.get_name() == "Windows"
+	var suffixes := PackedStringArray([".exe", ".cmd", ".bat"]) if windows else PackedStringArray([""])
+	for directory in OS.get_environment("PATH").split(";" if windows else ":", false):
+		for suffix in suffixes:
+			var candidate := directory.strip_edges().path_join(name + suffix)
+			if FileAccess.file_exists(candidate):
+				return candidate
+	return ""
 
 
 func _blob_url(repo: String, revision: String, path: String) -> String:
@@ -255,13 +316,25 @@ func _file_size(path: String) -> int:
 	return size
 
 
+## Hashing runs between files, and reading 441 MB off disk in one go stops
+## the editor for as long as that takes. A stopped editor is what a hung
+## download looks like, so the read gives a frame back now and then. It is
+## chunked already, which is what makes that free.
 func _sha256(path: String) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return ""
+	var loop := Engine.get_main_loop() as SceneTree
 	var context := HashingContext.new()
 	context.start(HashingContext.HASH_SHA256)
+	var chunks := 0
 	while not file.eof_reached():
 		context.update(file.get_buffer(HASH_CHUNK))
+		chunks += 1
+		# Every 64 MiB: often enough to keep the editor answering, seldom
+		# enough that waiting for frames does not outweigh the read.
+		if loop != null and chunks % 64 == 0:
+			_emit_progress()
+			await loop.process_frame
 	file.close()
 	return context.finish().hex_encode()

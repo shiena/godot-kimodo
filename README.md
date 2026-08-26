@@ -23,10 +23,11 @@ The model sets the bar, not the addon.
 
 | | Needs | Why |
 |---|---|---|
-| Disk | **15.2 GiB** | 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, across 36 files |
+| Disk | **15.2 GiB** | 1.05 GiB of motion GGUF and 14.14 GiB of text bundle, across 36 files. The three models are within 1% of each other in size, and all of them share the one text bundle |
 | VRAM | **2 GB** in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128,256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers, so no setting gets under it |
 | Vulkan | **1.2** | ggml-vulkan refuses to initialise below it |
 | Platform | x86_64 Linux or Windows | kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, which rules out mobile and web |
+| Python | **3.9** or later, or `uv` | Only to convert SMPL-X, and only once. The converter imports nothing outside the standard library, so uv is the answer for a machine with no Python rather than a dependency resolver |
 | Godot | **4.4** or later | What the extension declares as its `compatibility_minimum`, and the godot-cpp branch it is built against. Development happens on 4.7 |
 
 Those figures are peaks, not a sum. The text encoder frees the token embedding
@@ -46,16 +47,72 @@ covers both platforms. Enable **Kimodo** under **Project Settings > Plugins**, a
 the dock appears on the right.
 
 The weights are not in the archive. The addon downloads them, once, on first
-use.
+use. The SMPL-X model is the exception and has to be converted locally; see
+[The motion model](#the-motion-model).
 
 To compile it yourself instead, see [Build from source](#build-from-source).
 
+## The motion model
+
+Three models generate motion, and **Model** in the Setup pane picks between
+them. They differ in the skeleton they predict, which decides how much of a
+humanoid rig the result can drive.
+
+| Model | Joints | Reaches | Weights |
+|---|---|---|---|
+| **SMPL-X** | 22 | all 22 | convert it yourself |
+| **SOMA** | 30 | 25, adding a jaw, eyes and fingertips | published |
+| **Unitree G1** | 34 | 16; a robot with no head, and three single-axis joints where a rig has one | published |
+
+They share the one text encoder, so switching models re-downloads about 1 GiB
+and nothing else.
+
+SOMA and G1 download like anything else: press **Download**. They are under the
+[NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/),
+which allows the conversion to be redistributed.
+
+SMPL-X is the one that cannot. `LocalAI-io/Kimodo-SMPLX-RP-v1-GGML` carried a
+converted GGUF until its maintainers read the upstream licence, which forbids
+distributing a derivative model. The repository now holds a model card and
+nothing else, so **Download** leaves that GGUF missing however many times you
+press it.
+
+Converting the SMPL-X checkpoint for yourself is allowed; publishing the result
+is not, so **Convert SMPL-X...** in the Setup pane does it on your machine.
+
+1. Click **Model page** with SMPL-X selected. It opens
+   [nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1),
+   which is gated. Accept the licence there and mint a token under
+   [Settings > Access Tokens](https://huggingface.co/settings/tokens). Nothing
+   in the addon can do this part for you.
+2. Paste the token into the token field.
+3. Click **Convert SMPL-X...**. It fetches the 1.05 GiB checkpoint, writes the
+   revision it pinned, and runs the converter on it. Expect about 2.1 GiB of
+   disk while it works, half of which is the checkpoint you can delete
+   afterwards.
+
+The converter is kimodo.cpp's own `convert_motion_to_gguf.py`, copied into
+`addons/kimodo/scripts/` by the build rather than rewritten in GDScript: it is
+the parser upstream reviews, it imports nothing outside the standard library,
+and a second reader of a binary format is a second thing to get wrong. The
+addon runs it with whatever Python is on `PATH`, and falls back to
+`uv run --no-project --python 3.12` on a machine that has none.
+
+The presence line updates when it finishes, and reads all 36 files.
+
+A clip names no skeleton: it is two headerless buffers of floats. The addon
+recognises which model produced one from its width, since 22, 30 and 34 joints
+are three different widths. So an old clip keeps working, and a clip generated
+with the wrong model in the picker still loads as what it actually is.
+
 ## Generate your first clip
 
-1. Open the **Setup** pane and check **Model directory**. This is where the
-   weights land.
+1. Open the **Setup** pane, pick a **Model**, and check **Model directory**.
+   This is where the weights land.
 2. Click **Download**, and wait. The download is 15.2 GiB, and the pane reports
-   each file as it arrives.
+   each file as it arrives. On SMPL-X it ends by reporting the motion GGUF as
+   missing, which is expected: convert it as
+   [The motion model](#the-motion-model) describes.
 3. Under **Generate**, set the length in frames and enter a prompt.
 4. Click **Generate**. The clip appears in **Motion** when the run finishes, and
    **Preview** plays it on a built-in mannequin.
@@ -86,14 +143,31 @@ answer survives the pane being folded again.
 where generated clips are written. Both belong to the machine rather than to the
 project.
 
-**Weights** fetches two published repositories and checks every file against
-their manifests. Neither needs an access token; the field is there for a gated
-mirror.
+**Model** picks which of the three skeletons to generate for, and everything
+else in the pane follows it: which GGUF has to be on disk, which repository
+serves it, and which mannequin stands in for the rig in **Preview**.
+
+**Convert SMPL-X...** is enabled only for the model nobody may publish, and
+says so on the other two. **Model page** opens whichever model is selected on
+Hugging Face, which for SMPL-X is where the licence has to be accepted.
+
+**Weights** fetches the configured repositories and checks every file against
+their manifests. A repository that will not serve its manifest costs its own
+files and no others, which is what leaves the text bundle downloadable while
+the SMPL-X GGUF is not. No published repository needs an access token; the
+field is there for a gated mirror of your own, and for the SMPL-X checkpoint,
+which is gated for everyone. Setting **Motion repo** in Editor Settings
+overrides the published repository for whichever model is picked.
+
+The checkpoint publishes no hashes, so there is nothing to verify it against
+beyond the size Hugging Face reports and curl's own transfer. The conversion
+records the SHA-256 it actually read into the GGUF, which is the honest place
+for it.
 
 Downloading keeps whatever is already on disk, so it resumes an interrupted
 fetch and repairs a damaged one. Clicking it when all 36 files are present asks
 first, and says what it would do. It compares sizes against the manifest and
-re-fetches only a mismatch, which usually transfers nothing but the two
+re-fetches only a mismatch, which usually transfers nothing but the
 manifests.
 Selecting **Re-hash existing** reads all 15.2 GiB back to check contents as well,
 and the question says so.
@@ -162,14 +236,23 @@ scale between the two rest heights:
 
 ```
 Skeleton3D  56 bones
-mapped 22/22, scale 0.999
+SMPL-X: mapped 22/22, scale 0.999
 every joint resolved
 ```
 
+The count is against what the humanoid profile can carry, not against the joint
+count. G1 reads `mapped 16/16` on a rig that resolves everything, because the
+other 18 of its 34 joints are single axes no rig gives a bone to.
+
 A sample map sits at `addons/kimodo/samples/smplx_bone_map.tres` and is where
-the setting starts. It pairs the humanoid profile with SMPL-X joint names, so a
-rig carrying those names verbatim is a valid target, and it doubles as a worked
-example of the format.
+the setting starts, with `soma_bone_map.tres` and `g1_bone_map.tres` alongside
+it. Each pairs the humanoid profile with one model own joint names, so a rig
+carrying those names verbatim is a valid target, and they double as worked
+examples of the format. Regenerate them rather than editing them:
+
+```sh
+godot --headless --path project -s res://tools/make_bone_maps.gd
+```
 
 For Mixamo, VRM, or any other rig, Godot builds the map itself. Create a
 `BoneMap` and set its profile to `SkeletonProfileHumanoid`. The inspector then
@@ -223,7 +306,7 @@ editor and never ships in an export, so none of it has to reach a running game.
 Pointing the weights or the output at another drive is a personal answer, and it
 should not arrive as a change to a tracked file.
 
-All 16 are declared when the plugin loads, so the Editor Settings dialog
+All 20 are declared when the plugin loads, so the Editor Settings dialog
 lists each with a range, a file filter, or an enum before the dock has written
 anything.
 
@@ -270,6 +353,14 @@ table is slightly asymmetric and bows the knees further outward than a leg does,
 and the retargeting scale is measured against it. It can be dropped once the
 model files expose the rest pose directly.
 
+**The SOMA and G1 mappings are unverified.** SMPL-X has been watched against
+generated motion; the other two have not, because getting a clip out of them
+needs the weights, a GPU run and something to compare against. Which humanoid
+bone each of their joints drives is a reading of the joint names and the rest
+offsets, and a reading can be wrong. G1 in particular resolves its three
+single-axis hip joints onto one thigh bone by taking the last of the three,
+which is right if the chain is ordered pitch, roll, yaw as the names say.
+
 **Only the 22 body joints are used.** Kimodo is SMPL-X, but this addon reads the
 body skeleton alone: no hands, no face. `SkeletonProfileHumanoid` has 56 bones,
 so a fully rigged character keeps its fingers at rest.
@@ -289,6 +380,11 @@ The build writes `project/addons/kimodo/bin/<platform>/`, which is where
 the addon folder, so `addons/kimodo` is both the whole of a release and the
 whole of what anyone copies into a project. The dock is GDScript and needs no
 build of its own.
+
+The same run copies kimodo.cpp's `convert_motion_to_gguf.py` into
+`project/addons/kimodo/scripts/`. Neither that nor `bin/` is committed: the
+copy that ships belongs to the pinned submodule revision, so there is no second
+version of either to keep in step.
 
 The released libraries are single precision. For a double-precision Godot,
 build with `scons precision=double` and add the matching entries to the
@@ -349,7 +445,9 @@ Vulkan SDK, which both sides need for `glslc`.
 
 `ci.yml` builds both targets on every push. `make_build.yml` is run by hand with
 a version number. It builds both target types, assembles `addons/kimodo` with
-all four libraries in it, and publishes that as a zip on a GitHub release. It
+all four libraries and the SMPL-X converter in it, and publishes that as a zip
+on a GitHub release. The converter comes from the Linux release build, since it
+is the same file on every platform and only exists after scons has run. It
 commits `plugin.cfg` and nothing else, since built libraries stay out of the
 repository and reach people through the release asset.
 
@@ -417,6 +515,12 @@ Its bones are laid out from the SMPL-X rest and already carry
 `SkeletonProfileHumanoid` names, which is what lets the preview use it with no
 bone map and no import-time rest correction.
 
+Only SMPL-X ships one. SOMA and G1 fall back to capsules generated from their
+own rest pose, which is a worse-looking answer and a correct one. Each model
+has a mannequin setting of its own under `kimodo/paths`, so a modeller can
+point one at a figure of their own. It has to meet the same two conditions:
+`SkeletonProfileHumanoid` bone names, and standing on the floor at rest.
+
 ## Licence
 
 godot-kimodo is licensed under the [Apache License 2.0](LICENSE), which is also
@@ -427,6 +531,7 @@ The release archive additionally bundles [ggml](https://github.com/ggml-org/ggml
 which is MIT. [NOTICE](NOTICE) carries the attributions Apache 2.0 asks for,
 including which files this project patches and why.
 
-The weights are not distributed with the addon. It downloads them from their
-published repositories, and they carry terms of their own; read those before
-shipping anything generated with them.
+The weights are not distributed with the addon. It downloads what is published,
+and the motion model is not: converting that checkpoint is allowed,
+redistributing the conversion is not. Both carry terms of their own; read those
+before shipping anything generated with them.

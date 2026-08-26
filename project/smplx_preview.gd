@@ -175,12 +175,12 @@ func _build_target() -> void:
 
 	match target:
 		Target.SMPLX_REST:
-			_skeleton = KimodoSmplx.create_rest_skeleton()
+			_skeleton = KimodoSkeleton.create_rest_skeleton()
 			_target_root = _skeleton
 			add_child(_target_root)
-			KimodoSmplx.build_mannequin(_skeleton, null)
+			KimodoSkeleton.build_mannequin(_skeleton, null)
 		Target.HUMANOID:
-			_skeleton = KimodoSmplx.create_humanoid_skeleton()
+			_skeleton = KimodoSkeleton.create_humanoid_skeleton()
 			_target_root = _skeleton
 			add_child(_target_root)
 			KimodoRetarget.build_mannequin(_skeleton, null, null)

@@ -21,11 +21,58 @@ const PREFIX := "kimodo/"
 
 const SAMPLE_BONE_MAP := "res://addons/kimodo/samples/smplx_bone_map.tres"
 
+## What each skeleton kimodo.cpp generates for needs from this addon: where its
+## GGUF lands under the model directory, which repository publishes it, and the
+## mannequin the preview stands in for it.
+##
+## Only SMPL-X ships a mannequin. The other two fall back to procedural
+## capsules built from their own rest pose, which is a worse-looking answer and
+## a correct one; a modeller can point the setting at something better without
+## the addon shipping a robot.
+##
+## The repository here is a default rather than a setting. weights/motion_repo
+## overrides it when someone has a mirror of their own.
+const SKELETONS := {
+	"smplx22": {
+		"label": "SMPL-X",
+		"motion": "models/kimodo-smplx-rp-v1-f32.gguf",
+		"repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
+		"page": "https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1",
+		"mannequin": "res://addons/kimodo/samples/kimodo_mannequin.glb",
+		"bone_map": SAMPLE_BONE_MAP,
+		"published": false,
+	},
+	"soma30": {
+		"label": "SOMA",
+		"motion": "models/kimodo-soma-rp-v1.1-f32.gguf",
+		"repo": "LocalAI-io/Kimodo-SOMA-RP-v1.1-GGML",
+		"page": "https://huggingface.co/LocalAI-io/Kimodo-SOMA-RP-v1.1-GGML",
+		"mannequin": "",
+		"bone_map": "res://addons/kimodo/samples/soma_bone_map.tres",
+		"published": true,
+	},
+	"g1skel34": {
+		"label": "Unitree G1",
+		"motion": "models/kimodo-g1-rp-v1-f32.gguf",
+		"repo": "LocalAI-io/Kimodo-G1-RP-v1-GGML",
+		"page": "https://huggingface.co/LocalAI-io/Kimodo-G1-RP-v1-GGML",
+		"mannequin": "",
+		"bone_map": "res://addons/kimodo/samples/g1_bone_map.tres",
+		"published": true,
+	},
+}
+
+const DEFAULT_SKELETON := "smplx22"
+
 const DEFAULTS := {
 	"paths/models_dir": "user://kimodo_models",
 	"paths/output_dir": "user://kimodo_out",
 	"paths/bone_map": SAMPLE_BONE_MAP,
-	"weights/motion_repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
+	"paths/mannequin_smplx22": SKELETONS["smplx22"]["mannequin"],
+	"paths/mannequin_soma30": "",
+	"paths/mannequin_g1skel34": "",
+	"weights/skeleton": DEFAULT_SKELETON,
+	"weights/motion_repo": "",
 	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
 	"weights/revision": "main",
 	"generation/frames": 120,
@@ -45,6 +92,11 @@ const HINTS := {
 	"paths/models_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
 	"paths/output_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
 	"paths/bone_map": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
+	"paths/mannequin_smplx22": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.glb,*.gltf,*.tscn,*.scn"},
+	"paths/mannequin_soma30": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.glb,*.gltf,*.tscn,*.scn"},
+	"paths/mannequin_g1skel34": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.glb,*.gltf,*.tscn,*.scn"},
+	"weights/skeleton": {"hint": PROPERTY_HINT_ENUM, "hint_string": "smplx22,soma30,g1skel34"},
+	"weights/motion_repo": {"hint": PROPERTY_HINT_PLACEHOLDER_TEXT, "hint_string": "blank uses the published one"},
 	"weights/revision": {"hint": PROPERTY_HINT_PLACEHOLDER_TEXT, "hint_string": "a branch, tag or commit"},
 	"generation/frames": {"hint": PROPERTY_HINT_RANGE, "hint_string": "16,600,1"},
 	"generation/steps": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,200,1"},
@@ -58,9 +110,10 @@ const HINTS := {
 }
 
 ## The layout the upstream download script writes, and therefore the layout
-## kmd-generate is handed. Not settings: changing them would mean the bundle no
-## longer matches what kimodo.cpp expects.
-const MOTION_RELATIVE := "models/kimodo-smplx-rp-v1-f32.gguf"
+## kmd-generate is handed. Not a setting: changing it would mean the bundle no
+## longer matches what kimodo.cpp expects. Every skeleton shares the one text
+## encoder, which is why it is a single path while the motion GGUF is per
+## skeleton in SKELETONS.
 const TEXT_BUNDLE_RELATIVE := "generated/llm2vec-text-bundle"
 
 
@@ -106,9 +159,61 @@ static func generator_path() -> String:
 	return bundled if FileAccess.file_exists(bundled) else ""
 
 
+## The skeleton the dock generates for. An unknown value in editor settings is
+## treated as the default rather than carried into a lookup that would fail.
+static func skeleton() -> String:
+	var stored := String(get_value("weights/skeleton"))
+	return stored if SKELETONS.has(stored) else DEFAULT_SKELETON
+
+
+static func skeleton_entry(key: String = "") -> Dictionary:
+	return SKELETONS[key if SKELETONS.has(key) else skeleton()]
+
+
+## Where this skeleton GGUF sits under the model directory.
+static func motion_relative(key: String = "") -> String:
+	return String(skeleton_entry(key)["motion"])
+
+
+## The repository to fetch the motion GGUF from: a mirror when one is set, the
+## repository that publishes the chosen model otherwise.
+##
+## A stored value that only repeats a published repository is not a mirror. It
+## is the field as an earlier version of this addon wrote it, when there was
+## one model and its repository was the default, and honouring it would pin
+## every model to that one download. Someone who pastes a published repository
+## by hand means the same thing as leaving it blank.
+static func motion_repo(key: String = "") -> String:
+	var override := String(get_value("weights/motion_repo")).strip_edges()
+	if override.is_empty() or _is_published_repo(override):
+		return String(skeleton_entry(key)["repo"])
+	return override
+
+
+static func _is_published_repo(repo: String) -> bool:
+	for key in SKELETONS:
+		if repo == String(SKELETONS[key]["repo"]):
+			return true
+	return false
+
+
+static func _is_bundled_bone_map(path: String) -> bool:
+	for key in SKELETONS:
+		if path == String(SKELETONS[key]["bone_map"]):
+			return true
+	return false
+
+
 ## Absolute path of the motion GGUF under the configured model directory.
-static func motion_gguf_path() -> String:
-	return String(get_value("paths/models_dir")).path_join(MOTION_RELATIVE)
+static func motion_gguf_path(key: String = "") -> String:
+	return String(get_value("paths/models_dir")).path_join(motion_relative(key))
+
+
+## The scene to stand in for the target rig in the preview, or an empty string
+## when there is none and the procedural capsules have to do.
+static func mannequin_path(key: String = "") -> String:
+	var stored := String(get_value("paths/mannequin_%s" % (key if SKELETONS.has(key) else skeleton())))
+	return stored if not stored.is_empty() and ResourceLoader.exists(stored) else ""
 
 
 static func text_bundle_path() -> String:
@@ -124,11 +229,22 @@ static func output_dir() -> String:
 ## SkeletonProfileHumanoid names. A stored path that is not in this project came
 ## from another one, and the bundled sample is a better answer than a file that
 ## does not open.
-static func bone_map_path() -> String:
+##
+## The sample is per skeleton because it pairs the humanoid profile with that
+## skeleton own joint names, and the three sets of names have nothing in
+## common. A bundled sample sitting in the field therefore means "the sample"
+## rather than that one file, and which one it resolves to follows the model.
+## Anything else in the field is a map someone chose, and an empty field still
+## means no map at all, which is right for a rig already named after
+## SkeletonProfileHumanoid.
+static func bone_map_path(key: String = "") -> String:
 	var stored := String(get_value("paths/bone_map"))
+	if _is_bundled_bone_map(stored):
+		stored = String(skeleton_entry(key)["bone_map"])
 	if stored.is_empty() or FileAccess.file_exists(stored):
 		return stored
-	return SAMPLE_BONE_MAP if FileAccess.file_exists(SAMPLE_BONE_MAP) else ""
+	var sample := String(skeleton_entry(key)["bone_map"])
+	return sample if FileAccess.file_exists(sample) else ""
 
 
 ## Everything the child process reads from its environment. OS.create_process()

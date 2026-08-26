@@ -58,6 +58,16 @@ copy = env.Install("{}/addons/{}/bin/{}/".format(projectdir, addonname, env["pla
 
 default_args = [library, copy]
 
+# The SMPL-X checkpoint cannot be redistributed as a GGUF, so the addon carries
+# the converter instead and runs it from the dock. It is copied out of the
+# submodule rather than committed here, so the one that ships is always the one
+# belonging to the pinned revision and there is no second copy to keep in step.
+# It imports nothing outside the standard library.
+converter = env.Install(
+    "{}/addons/{}/scripts/".format(projectdir, addonname),
+    "kimodo.cpp/scripts/convert_motion_to_gguf.py")
+default_args.append(converter)
+
 # kmd-generate comes from kimodo.cpp's CMake build. It is put inside the addon
 # so the dock finds it without anyone typing a path, and it is skipped rather
 # than fatal when the toolchain for it is not installed: the addon is useful

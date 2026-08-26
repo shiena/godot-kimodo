@@ -3,7 +3,7 @@
 #include "kimodo_library.h"
 #include "kimodo_motion.h"
 #include "kimodo_retarget.h"
-#include "kimodo_smplx.h"
+#include "kimodo_skeleton.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
@@ -17,7 +17,7 @@ void initialize_kimodo_types(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(KimodoMotion);
-	GDREGISTER_ABSTRACT_CLASS(KimodoSmplx);
+	GDREGISTER_ABSTRACT_CLASS(KimodoSkeleton);
 	GDREGISTER_ABSTRACT_CLASS(KimodoRetarget);
 	GDREGISTER_ABSTRACT_CLASS(KimodoLibrary);
 }

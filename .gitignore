@@ -16,8 +16,9 @@
 /project/kimodo_out/
 
 # Ignore what scons puts in the addon: the extension, kmd-generate and the
-# shared libraries they load
+# shared libraries they load, and the converter it copies out of kimodo.cpp
 /project/addons/kimodo/bin/
+/project/addons/kimodo/scripts/
 
 # Ignore scons database
 .sconsign*.dblite
