@@ -61,8 +61,11 @@ its maintainers read the upstream licence, which forbids distributing a
 derivative model. The repository now holds a model card and nothing else, so
 **Download** leaves the motion GGUF missing however many times you press it.
 
-Converting the checkpoint for yourself is allowed; publishing the result is
-not. The converter is in the `kimodo.cpp` submodule. It needs Nix, a Hugging
+The same organisation publishes SOMA and G1 conversions, whose licence permits
+it. This addon cannot read either; see [Limitations](#limitations).
+
+Converting the SMPL-X checkpoint for yourself is allowed; publishing the result
+is not. The converter is in the `kimodo.cpp` submodule. It needs Nix, a Hugging
 Face account, and the licence accepted on
 [nvidia/Kimodo-SMPLX-RP-v1](https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1),
 which is gated.
@@ -320,6 +323,13 @@ addon holds a table calibrated from the upstream reference implementation. That
 table is slightly asymmetric and bows the knees further outward than a leg does,
 and the retargeting scale is measured against it. It can be dropped once the
 model files expose the rest pose directly.
+
+**Only SMPL-X models load.** kimodo.cpp also generates for the 30-joint SOMA
+and the 34-joint Unitree G1 skeletons, and unlike SMPL-X those conversions are
+published. This addon reads SMPL-X alone: the rest pose it decodes against, the
+joint parents it walks, and the humanoid bone map are all that one size. A clip
+generated with either of the others is refused as it loads, naming the joint
+count it found.
 
 **Only the 22 body joints are used.** Kimodo is SMPL-X, but this addon reads the
 body skeleton alone: no hands, no face. `SkeletonProfileHumanoid` has 56 bones,
