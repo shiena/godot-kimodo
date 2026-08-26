@@ -229,15 +229,20 @@ func _build_target() -> void:
 func _build_save() -> void:
 	_section(_body, "Save")
 	# Labelled, because an unlabelled field under a header called Save and
-	# holding something that looks like a stem reads as a path.
+	# holding something that looks like a stem reads as a path. Beside the field
+	# rather than above it: the label is short and the row would otherwise cost
+	# a line of a dock that already scrolls.
+	var name_row := HBoxContainer.new()
+	_body.add_child(name_row)
 	var name_label := Label.new()
 	name_label.text = "Clip name"
 	name_label.tooltip_text = "Names the animation inside the AnimationPlayer that Bake writes to, and suggests the file name that Save clip offers."
-	_body.add_child(name_label)
+	name_row.add_child(name_label)
 	_clip_name = LineEdit.new()
 	_clip_name.text = "kimodo_motion"
 	_clip_name.tooltip_text = name_label.tooltip_text
-	_body.add_child(_clip_name)
+	_clip_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_row.add_child(_clip_name)
 	_button(_body, "Save clip...", _on_save_clip, "Write the Animation as a standalone resource.")
 	_button(_body, "Open folder", _on_open_folder,
 			"Show the last file saved here in the file manager, or where Save clip offers to put one.")
