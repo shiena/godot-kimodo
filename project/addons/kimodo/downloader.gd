@@ -116,7 +116,8 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 		if not reverify:
 			return ""
 		_current_label = "verifying %s" % label
-		if _sha256(path) == item["sha256"]:
+		_current_bytes = item["bytes"]
+		if await _sha256(path) == item["sha256"]:
 			return ""
 		DirAccess.remove_absolute(path)
 
@@ -136,7 +137,8 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 			return "curl exited with %d while fetching %s." % [code, label]
 
 		_current_label = "verifying %s" % label
-		if _sha256(part) == item["sha256"]:
+		_current_bytes = item["bytes"]
+		if await _sha256(part) == item["sha256"]:
 			DirAccess.remove_absolute(path)
 			var moved := DirAccess.rename_absolute(part, path)
 			if moved != OK:
@@ -273,13 +275,25 @@ func _file_size(path: String) -> int:
 	return size
 
 
+## Hashing runs between files, and reading 441 MB off disk in one go stops
+## the editor for as long as that takes. A stopped editor is what a hung
+## download looks like, so the read gives a frame back now and then. It is
+## chunked already, which is what makes that free.
 func _sha256(path: String) -> String:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return ""
+	var loop := Engine.get_main_loop() as SceneTree
 	var context := HashingContext.new()
 	context.start(HashingContext.HASH_SHA256)
+	var chunks := 0
 	while not file.eof_reached():
 		context.update(file.get_buffer(HASH_CHUNK))
+		chunks += 1
+		# Every 64 MiB: often enough to keep the editor answering, seldom
+		# enough that waiting for frames does not outweigh the read.
+		if loop != null and chunks % 64 == 0:
+			_emit_progress()
+			await loop.process_frame
 	file.close()
 	return context.finish().hex_encode()
