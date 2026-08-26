@@ -855,6 +855,9 @@ func _load_motion(dir: String) -> bool:
 	var motion := KimodoMotion.new()
 	if motion.load_directory(dir) != OK:
 		_motion = null
+		# Or the preview goes on showing the clip before this one, which is a
+		# worse answer than an empty one.
+		_reload_preview()
 		_set_message(_motion_label, "Failed to load %s." % dir)
 		return false
 	_motion = motion
@@ -1159,6 +1162,15 @@ func _reload_preview() -> void:
 		_preview_player.remove_animation_library(&"")
 	_preview_time = 0.0
 	if _motion == null:
+		# Back to how the preview opens. Stopping the player leaves the bones
+		# wherever the last seek put them, so a preview with nothing loaded sat
+		# frozen mid-stride and read as a clip that had stopped responding.
+		# The camera is left alone: where someone put it is not clip state.
+		_set_preview_running(false)
+		_preview_slider.set_value_no_signal(0.0)
+		if _preview_skeleton != null:
+			_preview_skeleton.reset_bone_poses()
+		_aim_preview()
 		return
 
 	var path := _preview_figure.get_path_to(_preview_skeleton)
