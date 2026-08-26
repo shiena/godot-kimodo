@@ -24,6 +24,7 @@ extends ScrollContainer
 
 const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
+const Checkpoint := preload("res://addons/kimodo/checkpoint.gd")
 ## Why a download that fetched everything on offer can still leave one file
 ## missing. LocalAI-io withdrew the converted SMPL-X weights after reading the
 ## upstream NVIDIA licence, which forbids distributing a derivative model, so
@@ -47,6 +48,9 @@ var _setup_toggle: Button
 var _setup: VBoxContainer
 var _skeleton: OptionButton
 var _source: Label
+var _convert_button: Button
+var _page_button: Button
+var _checkpoint: Node
 
 var _prompt: TextEdit
 ## One row per prompt after the first. Empty for an ordinary single-prompt run.
@@ -155,6 +159,7 @@ func _ready() -> void:
 	_body.add_child(_setup)
 	_build_folders()
 	_build_weights()
+	_refresh_buttons()
 	_build_runtime()
 
 	_build_generate()
@@ -357,6 +362,12 @@ func _build_weights() -> void:
 	_skeleton.item_selected.connect(_on_skeleton_selected)
 	skeleton_row.add_child(_skeleton)
 
+	_checkpoint = Checkpoint.new()
+	_checkpoint.name = "Checkpoint"
+	add_child(_checkpoint)
+	_checkpoint.progress.connect(_on_download_progress)
+	_checkpoint.finished.connect(_on_convert_finished)
+
 	_source = Label.new()
 	_source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
 	_setup.add_child(_source)
@@ -371,7 +382,8 @@ func _build_weights() -> void:
 	_token = LineEdit.new()
 	_token.secret = true
 	_token.placeholder_text = "Hugging Face token"
-	_token.tooltip_text = "Only needed for a gated mirror. The published repositories do not ask for one."
+	_token.tooltip_text = ("Needed to convert SMPL-X: its checkpoint is gated, and a token only works once "
+			+ "the licence is accepted on the model page. The published models do not ask for one.")
 	_token.text = String(Settings.get_value("download/access_token"))
 	_token.text_changed.connect(func(value): Settings.set_value("download/access_token", value))
 	_setup.add_child(_token)
@@ -386,8 +398,18 @@ func _build_weights() -> void:
 	_download_button = _button(buttons, "Download", _on_download,
 			"Fetch whatever the configured repositories publish and verify every file against their manifests. About 15.2 GiB. Files already in place are kept, so this also resumes and repairs.")
 	_download_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_cancel_button = _button(buttons, "Cancel", func(): _downloader.cancel())
+	_cancel_button = _button(buttons, "Cancel", func(): _cancel_transfer())
 	_cancel_button.disabled = true
+
+	# A second row: four buttons across a dock this narrow leaves each of them
+	# too small to read.
+	var extras := HBoxContainer.new()
+	_setup.add_child(extras)
+	_convert_button = _button(extras, "Convert SMPL-X...", _on_convert,
+			"Fetch the gated checkpoint and run kimodo.cpp's converter on it. About 1.13 GiB down and the same again on disk. Needs a Hugging Face token and Python 3.9 or later, or uv.")
+	_convert_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_page_button = _button(extras, "Model page", _on_open_model_page,
+			"Open the model on Hugging Face. For SMPL-X this is where the licence is accepted and a token is minted, which nothing here can do for you.")
 
 	_download_bar = ProgressBar.new()
 	_download_bar.max_value = 1.0
@@ -608,6 +630,54 @@ func _motion_is_unobtainable(p_missing: PackedStringArray) -> bool:
 	return not bool(Settings.skeleton_entry()["published"])
 
 
+## Converting is only ever the answer for the model nobody may publish. The
+## button stays visible on the others so the row does not move under the
+## cursor, and says why it is off.
+func _refresh_buttons() -> void:
+	var published: bool = bool(Settings.skeleton_entry()["published"])
+	_convert_button.disabled = published or _downloader.is_busy() or _checkpoint.is_busy()
+	if published:
+		_convert_button.tooltip_text = ("%s is published as a GGUF, so Download fetches it and there is nothing "
+				+ "to convert.") % Settings.skeleton_entry()["label"]
+	else:
+		_convert_button.tooltip_text = ("Fetch the gated checkpoint and run kimodo.cpp's converter on it. About "
+				+ "1.13 GiB down and the same again on disk. Needs a Hugging Face token and Python 3.9 or later, or uv.")
+
+
+func _on_open_model_page() -> void:
+	OS.shell_open(String(Settings.skeleton_entry()["page"]))
+
+
+## Both halves are long and neither can be undone halfway, so the question says
+## what it costs before either starts.
+func _on_convert() -> void:
+	if _downloader.is_busy() or _checkpoint.is_busy():
+		return
+	var destination := _models_dir.text.strip_edges()
+	if destination.is_empty():
+		_set_message(_download_status, "Set a model directory first.")
+		return
+	if _token.text.strip_edges().is_empty():
+		_set_message(_download_status, ("The checkpoint is gated. Accept its licence on the model page, "
+				+ "then paste a Hugging Face token above."))
+		return
+
+	_download_button.disabled = true
+	_convert_button.disabled = true
+	_cancel_button.disabled = false
+	_set_message(_download_status, "Reading what %s publishes..." % Checkpoint.REPO)
+	_checkpoint.run_conversion(destination, _token.text.strip_edges(), Settings.motion_gguf_path("smplx22"))
+
+
+func _on_convert_finished(ok: bool, message: String) -> void:
+	_download_button.disabled = false
+	_cancel_button.disabled = true
+	_download_bar.value = 1.0 if ok else 0.0
+	_set_message(_download_status, message)
+	_refresh_buttons()
+	_refresh_presence()
+
+
 func _refresh_source() -> void:
 	_source.text = "Source: kimodo/weights"
 	_source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Editor Settings under kimodo/weights." % [
@@ -621,6 +691,7 @@ func _refresh_source() -> void:
 func _on_skeleton_selected(p_index: int) -> void:
 	Settings.set_value("weights/skeleton", String(_skeleton.get_item_metadata(p_index)))
 	_refresh_source()
+	_refresh_buttons()
 	_refresh_presence()
 	_refresh_target()
 	_rebuild_preview_figure()
@@ -661,8 +732,14 @@ func _presence_line(label: String, present: bool) -> String:
 	return "[color=%s]%s[/color]  %s" % [colour, "present" if present else "missing", label]
 
 
+## One Cancel for both, because only one of them can be running.
+func _cancel_transfer() -> void:
+	_downloader.cancel()
+	_checkpoint.cancel()
+
+
 func _on_download() -> void:
-	if _downloader.is_busy():
+	if _downloader.is_busy() or _checkpoint.is_busy():
 		return
 	# A resume needs no ceremony. Asking is for the case where there is nothing
 	# obvious to gain, so the question has to say what pressing it actually costs.
@@ -721,6 +798,7 @@ func _on_download_progress(text: String, ratio: float) -> void:
 func _on_download_finished(ok: bool, message: String) -> void:
 	_download_button.disabled = false
 	_cancel_button.disabled = true
+	_refresh_buttons()
 	_download_bar.value = 1.0 if ok else 0.0
 	# Everything the repositories still serve arriving, and the motion GGUF not,
 	# is the expected end of a download rather than a fault in it. Saying only
