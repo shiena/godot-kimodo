@@ -25,7 +25,7 @@ The model sets the bar, not the addon.
 | VRAM | **2 GB** in practice, 1002 MiB at the floor | `token_embedding.weight` is one 128256 x 4096 BF16 tensor of 1,050,673,152 bytes, and a tensor cannot be split across buffers, so no setting gets under it |
 | Vulkan | **1.2** | ggml-vulkan refuses to initialise below it |
 | Platform | x86_64 Linux or Windows | kimodo.cpp needs a C++23 compiler and the GGML Vulkan backend, which rules out mobile and web |
-| Godot | **4.4** or later | The extension's `compatibility_minimum` |
+| Godot | **4.4** or later | What the extension declares as its `compatibility_minimum`, and the godot-cpp branch it is built against. Development happens on 4.7 |
 
 Those figures are peaks, not a sum. The text encoder frees the token embedding
 before its layer loop and frees each chunk of layers before the next, and the
