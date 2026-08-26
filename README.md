@@ -5,9 +5,10 @@ English | [日本語](README_ja.md)
 Generate character animation from a sentence, inside the Godot editor.
 
 godot-kimodo is an editor addon around [kimodo.cpp](https://github.com/localai-org/kimodo.cpp),
-a text-to-motion model that produces SMPL-X skeletal animation. The addon runs
-the model, retargets the result onto a `Skeleton3D` in your scene, and hands you
-an ordinary Godot `Animation`.
+a text-to-motion model. It generates for the 22-joint SMPL-X skeleton, the
+30-joint SOMA one or Unitree's 34-joint G1 robot; the addon runs whichever you
+pick, retargets the result onto a `Skeleton3D` in your scene, and hands you an
+ordinary Godot `Animation`.
 
 What you save is a plain `Animation` resource. It has no dependency on this
 addon, on kimodo.cpp, or on the 15 GiB of weights that produced it. Nothing here
@@ -117,7 +118,7 @@ with the wrong model in the picker still loads as what it actually is.
 4. Click **Generate**. The clip appears in **Motion** when the run finishes, and
    **Preview** plays it on a built-in mannequin.
 5. Open a scene containing the rig you want to animate. **Target** finds its
-   `Skeleton3D` and reports how many of the 22 joints it could map.
+   `Skeleton3D` and reports how many of the joints it could map.
 6. Name the clip under **Save**, then click **Bake** to put it on an
    `AnimationPlayer` in that scene. **Save clip** writes it out as a resource
    instead.
@@ -226,13 +227,14 @@ Two fields, both used on every bake.
 report underneath follows the editor's selection, so what it describes is what a
 bake would reach.
 
-**Bone map** translates SMPL-X joint names into the names that rig uses. It is
-only needed when those names are not `SkeletonProfileHumanoid`'s. The field is a
-one-session override of the `kimodo/paths/bone_map` setting, and shows that
-setting as its placeholder while it is empty.
+**Bone map** translates the joint names of whichever model produced the clip
+into the names that rig uses. It is only needed when those names are not
+`SkeletonProfileHumanoid`'s. The field is a one-session override of the
+`kimodo/paths/bone_map` setting, and shows that setting as its placeholder
+while it is empty.
 
-The report reads out how many of the 22 joints resolved, which did not, and the
-scale between the two rest heights:
+The report names the model, reads out how many joints resolved and which did
+not, and gives the scale between the two rest heights:
 
 ```
 Skeleton3D  56 bones
@@ -291,12 +293,12 @@ taller.
 The camera follows the root while the grid stays fixed to the world, so travel
 and ground contact both have something to read against.
 
-The mannequin is dimensioned from the same rest pose the motion is decoded
-against. It therefore maps all 22 joints at a scale of 1.0, and stands on the
-floor without adjustment. Its left limbs are warm and its right limbs cold, with a
-marker on the face, because a uniformly grey figure cannot show a mirrored clip.
-Removing the model leaves the addon working: the preview falls back to
-procedural capsules.
+The bundled mannequin is dimensioned from the same rest pose SMPL-X motion is
+decoded against. It therefore maps all 22 joints at a scale of 1.0, and stands
+on the floor without adjustment. Its left limbs are warm and its right limbs
+cold, with a marker on the face, because a uniformly grey figure cannot show a
+mirrored clip. Removing the model leaves the addon working: the preview falls
+back to procedural capsules.
 
 ## Settings
 
@@ -361,9 +363,10 @@ offsets, and a reading can be wrong. G1 in particular resolves its three
 single-axis hip joints onto one thigh bone by taking the last of the three,
 which is right if the chain is ordered pitch, roll, yaw as the names say.
 
-**Only the 22 body joints are used.** Kimodo is SMPL-X, but this addon reads the
-body skeleton alone: no hands, no face. `SkeletonProfileHumanoid` has 56 bones,
-so a fully rigged character keeps its fingers at rest.
+**Nothing below the wrist is animated.** SMPL-X stops at 22 body joints, and
+what SOMA adds beyond them is a jaw, two eyes and one fingertip per hand, which
+is not a hand. `SkeletonProfileHumanoid` has 56 bones, so a fully rigged
+character keeps its fingers at rest whichever model produced the clip.
 
 ## Build from source
 
@@ -532,6 +535,7 @@ which is MIT. [NOTICE](NOTICE) carries the attributions Apache 2.0 asks for,
 including which files this project patches and why.
 
 The weights are not distributed with the addon. It downloads what is published,
-and the motion model is not: converting that checkpoint is allowed,
-redistributing the conversion is not. Both carry terms of their own; read those
-before shipping anything generated with them.
+which is the text encoder and two of the three motion models. The SMPL-X
+conversion is not published, because converting that checkpoint is allowed and
+redistributing the result is not. Every one of them carries terms of its own;
+read those before shipping anything generated with them.
