@@ -415,6 +415,12 @@ func _build_runtime() -> void:
 func _on_setup_toggled(pressed: bool) -> void:
 	_setup.visible = pressed
 	_setup_toggle.text = "▾  Setup" if pressed else "▸  Setup"
+	# Weights can arrive from outside the editor: the motion GGUF is
+	# converted locally, and a bundle can be copied in from another
+	# machine. Opening this pane is when someone asks whether they are
+	# there now, so it is a poor moment to answer from a stale count.
+	if pressed:
+		_refresh_presence()
 
 
 func _on_backend_selected(index: int) -> void:
