@@ -23,6 +23,7 @@ var _busy := false
 
 var _current_part := ""
 var _current_bytes := 0
+var _current_item_bytes := 0
 var _done_bytes := 0
 var _total_bytes := 0
 var _current_label := ""
@@ -109,6 +110,8 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 	var path: String = item["path"]
 	var label: String = item["label"]
 
+	_current_item_bytes = item["bytes"]
+
 	if _is_present(path, item["bytes"]):
 		if not reverify:
 			return ""
@@ -125,7 +128,7 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 	for attempt in 2:
 		if attempt == 1:
 			DirAccess.remove_absolute(part)
-		_current_label = "%s (%.1f MB)" % [label, item["bytes"] / 1048576.0]
+		_current_label = label
 		var code := await _curl(_download_args(item["url"], part, token), part)
 		if _cancelled:
 			return "Cancelled."
@@ -211,12 +214,19 @@ func _curl(args: PackedStringArray, watched_part: String) -> int:
 ## Polled from the wait loop rather than from _process, so the downloader does
 ## not need to be inside the scene tree to report anything.
 func _emit_progress() -> void:
+	var text := _current_label
+	# One layer is 2.9% of the bundle and a 441 MB file takes minutes, so
+	# the bar alone leaves a working download looking like a stalled one.
+	# The count moves every second and settles the question.
 	if not _current_part.is_empty():
 		_current_bytes = maxi(0, _file_size(_current_part))
+		if _current_item_bytes > 0:
+			text = "%s  %d of %d MB" % [_current_label,
+					_current_bytes / 1048576, _current_item_bytes / 1048576]
 	var ratio := 0.0
 	if _total_bytes > 0:
 		ratio = clampf(float(_done_bytes + _current_bytes) / float(_total_bytes), 0.0, 1.0)
-	progress.emit(_current_label, ratio)
+	progress.emit(text, ratio)
 
 
 # --- helpers -----------------------------------------------------------------
