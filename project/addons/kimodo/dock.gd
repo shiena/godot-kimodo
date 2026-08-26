@@ -189,8 +189,8 @@ func _build_motion() -> void:
 			"Send the clip to the system trash.")
 	_delete_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	_button(_body, "Load folder...", _on_load_folder,
-			"Read an OUT_DIR from somewhere other than the output root.")
+	_button(_body, "Open folder", _on_open_clip_folder,
+			"Show the selected clip in the file manager, or the output directory when nothing is picked.")
 	_motion_label = _message(_body, 2)
 	_motion_label.text = "No motion loaded."
 
@@ -825,16 +825,20 @@ func _apply_delete(clip: String) -> void:
 	_set_message(_status, "%s is in the trash." % clip.get_file())
 
 
-func _on_load_folder() -> void:
-	if is_instance_valid(_dialog):
-		_dialog.queue_free()
-	_dialog = FileDialog.new()
-	_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-	_dialog.size = Vector2i(720, 480)
-	_dialog.dir_selected.connect(func(path): _load_motion(path))
-	add_child(_dialog)
-	_dialog.popup_centered()
+## Looking inside a take is a file manager's job. Reading one straight into the
+## dock was the other half of this button and is gone with it: a clip outside
+## the output root ends up loaded but unlisted, with Rename and Delete unable to
+## reach it. Point the output directory at it instead and it joins the list.
+func _on_open_clip_folder() -> void:
+	var target := _selected_clip()
+	if target.is_empty():
+		target = Settings.output_dir()
+	if not DirAccess.dir_exists_absolute(target):
+		_set_message(_motion_label, "%s is not there yet." % target)
+		return
+	var absolute := ProjectSettings.globalize_path(target)
+	if OS.shell_show_in_file_manager(absolute, true) != OK:
+		_set_message(_motion_label, "Could not open %s." % absolute)
 
 
 func _load_motion(dir: String) -> bool:

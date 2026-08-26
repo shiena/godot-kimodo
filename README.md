@@ -204,8 +204,10 @@ stripping it out leaves the addon working.
 
 **Motion** lists every generation under the output directory, newest first.
 Picking one is what Target and Save then work on, so an older take can be
-revisited without hunting for its folder. `Load folder...` still reads an
-OUT_DIR from anywhere else.
+revisited without hunting for its folder, and `Open folder` shows it in the file
+manager. To work on takes that are somewhere else, point the output directory
+there: reading a single OUT_DIR into the dock left it loaded but unlisted, with
+Rename and Delete unable to reach it.
 
 A clip still called `gen_<stamp>` is labelled with its prompt; **Rename** gives
 the folder a name and the list shows that instead, which is the only way to tell
