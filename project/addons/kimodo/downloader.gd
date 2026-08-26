@@ -44,14 +44,24 @@ func cancel() -> void:
 func run(destination: String, repos: Array, token: String, reverify: bool) -> void:
 	if _busy:
 		return
+	_begin()
+	var message := await _run(destination, repos, token, reverify)
+	_end(message, "The bundle is complete and verified.")
+
+
+## Split out so that anything else built on this plumbing reports the same way.
+## checkpoint.gd fetches a repository with no manifest and then runs a
+## converter, and neither of those is a bundle.
+func _begin() -> void:
 	_busy = true
 	_cancelled = false
 	_done_bytes = 0
 	_total_bytes = 0
 
-	var message := await _run(destination, repos, token, reverify)
+
+func _end(message: String, success: String) -> void:
 	_busy = false
-	finished.emit(message.is_empty(), message if not message.is_empty() else "The bundle is complete and verified.")
+	finished.emit(message.is_empty(), message if not message.is_empty() else success)
 
 
 func _run(destination: String, repos: Array, token: String, reverify: bool) -> String:
@@ -130,22 +140,32 @@ func _fetch_one(item: Dictionary, token: String, reverify: bool) -> String:
 		if attempt == 1:
 			DirAccess.remove_absolute(part)
 		_current_label = label
-		var code := await _curl(_download_args(item["url"], part, token), part)
+		var code := await _run_process("curl", _download_args(item["url"], part, token), part)
 		if _cancelled:
 			return "Cancelled."
 		if code != 0:
 			return "curl exited with %d while fetching %s." % [code, label]
 
+		# A repository that publishes no hashes leaves the transfer itself as
+		# the only check there is. Comparing against an empty string would fail
+		# every file rather than admit that.
+		if String(item["sha256"]).is_empty():
+			return _publish(part, path, label)
+
 		_current_label = "verifying %s" % label
 		_current_bytes = item["bytes"]
 		if await _sha256(part) == item["sha256"]:
-			DirAccess.remove_absolute(path)
-			var moved := DirAccess.rename_absolute(part, path)
-			if moved != OK:
-				return "Cannot move %s into place (%d)." % [label, moved]
-			return ""
+			return _publish(part, path, label)
 
 	return "%s failed its checksum twice. The published file may have changed." % label
+
+
+func _publish(part: String, path: String, label: String) -> String:
+	DirAccess.remove_absolute(path)
+	var moved := DirAccess.rename_absolute(part, path)
+	if moved != OK:
+		return "Cannot move %s into place (%d)." % [label, moved]
+	return ""
 
 
 func _download_args(url: String, part: String, token: String) -> PackedStringArray:
@@ -176,7 +196,7 @@ func _fetch_manifest(repo: String, revision: String, token: String) -> Dictionar
 		args.append_array(PackedStringArray(["--header", "Authorization: Bearer " + token]))
 	args.append(_blob_url(repo, revision, MANIFEST_NAME))
 
-	var code := await _curl(args, "")
+	var code := await _run_process("curl", args, "")
 	if code != 0:
 		return {"error": "Cannot read the manifest of %s at %s (curl %d)." % [repo, revision, code]}
 
@@ -192,10 +212,14 @@ func _fetch_manifest(repo: String, revision: String, token: String) -> Dictionar
 	return {"files": parsed.get("files", [])}
 
 
-func _curl(args: PackedStringArray, watched_part: String) -> int:
+## Runs a child and reports what it writes while it does. curl is the usual
+## caller; the SMPL-X converter is the other one, and it is watched the same
+## way because a separate process offers no progress but the file it is
+## filling.
+func _run_process(program: String, args: PackedStringArray, watched_part: String) -> int:
 	_current_part = watched_part
 	_current_bytes = 0
-	_pid = OS.create_process("curl", args, false)
+	_pid = OS.create_process(program, args, false)
 	if _pid < 0:
 		return -1
 
