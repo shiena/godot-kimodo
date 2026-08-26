@@ -24,15 +24,20 @@ extends ScrollContainer
 
 const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
-const MANNEQUIN := "res://addons/kimodo/samples/kimodo_mannequin.glb"
-
 ## Why a download that fetched everything on offer can still leave one file
-## missing. LocalAI-io withdrew the converted motion weights after reading the
+## missing. LocalAI-io withdrew the converted SMPL-X weights after reading the
 ## upstream NVIDIA licence, which forbids distributing a derivative model, so
-## the repository now serves a model card and nothing else. Anyone who wants
+## that repository now serves a model card and nothing else. Anyone who wants
 ## the file converts it themselves; only the conversion is permitted, not its
-## publication. The path is globalized: this sentence ends in a command
-## someone runs in a shell, and no shell can write to a user:// path.
+## publication.
+##
+## It applies to SMPL-X alone. SOMA and G1 are under the NVIDIA Open Model
+## Licence and their conversions download like anything else, which is why the
+## message is reached through the skeleton table rather than printed whenever
+## a motion GGUF is missing.
+##
+## The path is globalized: this sentence ends in a command someone runs in a
+## shell, and no shell can write to a user:// path.
 const MOTION_UNPUBLISHED := ("The motion GGUF is no longer published: its upstream licence forbids "
 		+ "distributing a converted model. Convert it with kimodo.cpp and put it at %s.")
 
@@ -40,6 +45,8 @@ var _body: VBoxContainer
 
 var _setup_toggle: Button
 var _setup: VBoxContainer
+var _skeleton: OptionButton
+var _source: Label
 
 var _prompt: TextEdit
 ## One row per prompt after the first. Empty for an ordinary single-prompt run.
@@ -331,13 +338,29 @@ func _build_folders() -> void:
 
 func _build_weights() -> void:
 	_section(_setup, "Weights")
-	var source := Label.new()
-	source.text = "Source: kimodo/weights"
-	source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Editor Settings under kimodo/weights." % [
-		Settings.get_value("weights/motion_repo"), Settings.get_value("weights/text_repo"),
-		Settings.get_value("weights/revision")]
-	source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
-	_setup.add_child(source)
+	# Which model generates decides what gets downloaded, what the preview
+	# stands in with, and how many joints come back, so it belongs at the top
+	# of the pane rather than buried in Editor Settings.
+	var skeleton_row := HBoxContainer.new()
+	_setup.add_child(skeleton_row)
+	var skeleton_label := Label.new()
+	skeleton_label.text = "Model"
+	skeleton_row.add_child(skeleton_label)
+	_skeleton = OptionButton.new()
+	_skeleton.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_skeleton.tooltip_text = ("Which skeleton to generate for. SMPL-X is 22 joints and retargets onto a "
+			+ "humanoid rig whole. SOMA adds a face and fingertips at 30. G1 is a 34-joint robot with no head.")
+	for key in Settings.SKELETONS:
+		_skeleton.add_item(String(Settings.SKELETONS[key]["label"]))
+		_skeleton.set_item_metadata(_skeleton.item_count - 1, key)
+	_skeleton.select(Settings.SKELETONS.keys().find(Settings.skeleton()))
+	_skeleton.item_selected.connect(_on_skeleton_selected)
+	skeleton_row.add_child(_skeleton)
+
+	_source = Label.new()
+	_source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
+	_setup.add_child(_source)
+	_refresh_source()
 
 	_presence = RichTextLabel.new()
 	_presence.bbcode_enabled = true
@@ -552,7 +575,7 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 func _missing_weights() -> PackedStringArray:
 	var missing := PackedStringArray()
 	if not FileAccess.file_exists(Settings.motion_gguf_path()):
-		missing.append(Settings.MOTION_RELATIVE.get_file())
+		missing.append(Settings.motion_relative().get_file())
 
 	var bundle := Settings.text_bundle_path()
 	for name in ["tokenizer.gguf", "embedding.gguf", "final-norm.gguf"]:
@@ -567,6 +590,40 @@ func _missing_weights() -> PackedStringArray:
 
 func _weights_present() -> bool:
 	return _missing_weights().is_empty()
+
+
+## Which skeleton the dock is reading. A loaded clip settles it, because it was
+## recognised from the shape of the files themselves and no setting can argue
+## with that. Before one is loaded, the Model picker decides.
+func _reading_skeleton() -> String:
+	return _motion.get_skeleton_key() if _motion != null else Settings.skeleton()
+
+
+## Whether the motion GGUF is absent for a reason no amount of downloading will
+## fix. SMPL-X alone is in that position, so the explanation is not offered for
+## the two that publish theirs.
+func _motion_is_unobtainable(p_missing: PackedStringArray) -> bool:
+	if not (Settings.motion_relative().get_file() in p_missing):
+		return false
+	return not bool(Settings.skeleton_entry()["published"])
+
+
+func _refresh_source() -> void:
+	_source.text = "Source: kimodo/weights"
+	_source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Editor Settings under kimodo/weights." % [
+			Settings.motion_repo(), Settings.get_value("weights/text_repo"),
+			Settings.get_value("weights/revision")]
+
+
+## Changing the model changes which file has to be on disk, which repository
+## serves it, and what the preview should stand in with, so all three are asked
+## again rather than left describing the previous choice.
+func _on_skeleton_selected(p_index: int) -> void:
+	Settings.set_value("weights/skeleton", String(_skeleton.get_item_metadata(p_index)))
+	_refresh_source()
+	_refresh_presence()
+	_refresh_target()
+	_rebuild_preview_figure()
 
 
 func _refresh_presence() -> void:
@@ -590,7 +647,7 @@ func _refresh_presence() -> void:
 	# The download status says this too, and then the editor is closed and
 	# the label is gone while the file is still missing. The state and the
 	# reason for it belong in the same place.
-	if Settings.MOTION_RELATIVE.get_file() in missing:
+	if _motion_is_unobtainable(missing):
 		_presence.tooltip_text += "\n\n" + MOTION_UNPUBLISHED % ProjectSettings.globalize_path(Settings.motion_gguf_path())
 
 	# The same answer on the folded pane, so "are the weights there?" does not
@@ -639,9 +696,9 @@ func _start_download() -> void:
 	var revision := String(Settings.get_value("weights/revision"))
 	var repos := [
 		{
-			"repo": String(Settings.get_value("weights/motion_repo")),
+			"repo": Settings.motion_repo(),
 			"revision": revision,
-			"include": [Settings.MOTION_RELATIVE],
+			"include": [Settings.motion_relative()],
 		},
 		{
 			"repo": String(Settings.get_value("weights/text_repo")),
@@ -670,7 +727,7 @@ func _on_download_finished(ok: bool, message: String) -> void:
 	# that a manifest was unreadable would send someone looking for a broken
 	# network or a wrong repository name, and there is neither to find.
 	var missing := _missing_weights()
-	if missing.size() == 1 and missing[0] == Settings.MOTION_RELATIVE.get_file():
+	if missing.size() == 1 and _motion_is_unobtainable(missing):
 		message = MOTION_UNPUBLISHED % ProjectSettings.globalize_path(Settings.motion_gguf_path())
 	_set_message(_download_status, message)
 	_refresh_presence()
@@ -1074,7 +1131,7 @@ func _on_find_target() -> void:
 
 ## What the empty field stands for, so that leaving it alone is not a guess.
 func _bone_map_placeholder() -> String:
-	var fallback := Settings.bone_map_path()
+	var fallback := Settings.bone_map_path(_reading_skeleton())
 	return fallback.get_file() if not fallback.is_empty() else "BoneMap (optional)"
 
 
@@ -1084,7 +1141,7 @@ func _bone_map_placeholder() -> String:
 func _on_bone_map_changed(path: String) -> void:
 	var resolved := path.strip_edges()
 	if resolved.is_empty():
-		resolved = Settings.bone_map_path()
+		resolved = Settings.bone_map_path(_reading_skeleton())
 	_bone_map = null
 	# Guarded rather than loaded blind: this runs on every keystroke, and a
 	# half-typed path is a console error for each one.
@@ -1125,11 +1182,15 @@ func _refresh_target() -> void:
 		_target_label.tooltip_text = "Select a Skeleton3D, or open a scene that has one."
 		return
 
-	var report := KimodoRetarget.describe_mapping(skeleton, _bone_map)
+	var report := KimodoRetarget.describe_mapping(skeleton, _bone_map, _reading_skeleton())
 	var missing: PackedStringArray = report["missing"]
 	var lines := PackedStringArray()
 	lines.append("[b]%s[/b]  %d bones" % [skeleton.name, skeleton.get_bone_count()])
-	lines.append("mapped %d/22, scale %.3f" % [report["mapped"].size(), report["scale"]])
+	# Against what the profile can carry, not against the joint count. G1
+	# spends twenty of its thirty-four joints on axes a humanoid rig has no
+	# bone for, and counting those as failures would be a lie.
+	lines.append("%s: mapped %d/%d, scale %.3f" % [report["skeleton_label"],
+			report["mapped"].size(), report["reachable"], report["scale"]])
 	if missing.is_empty():
 		lines.append("[color=#7fd07f]every joint resolved[/color]")
 	else:
@@ -1347,14 +1408,17 @@ func _build_preview() -> void:
 	_aim_preview()
 
 
-## The bundled mannequin when it is there, the procedural capsules when it is
-## not, so stripping the model out leaves the addon working.
+## The mannequin configured for this skeleton when there is one, the procedural
+## capsules when there is not, so stripping the model out leaves the addon
+## working and an unmodelled skeleton still previews.
 ##
-## Its bones already carry SkeletonProfileHumanoid names and it already stands
-## on the floor, which is why nothing here needs a BoneMap or an import-time
-## rest fix.
+## The bundled SMPL-X mannequin carries SkeletonProfileHumanoid bone names and
+## already stands on the floor, which is why nothing here needs a BoneMap or an
+## import-time rest fix. A mannequin someone supplies for SOMA or G1 has to
+## meet the same two conditions.
 func _build_preview_figure() -> void:
-	var scene: PackedScene = load(MANNEQUIN) if ResourceLoader.exists(MANNEQUIN) else null
+	var configured := Settings.mannequin_path(_reading_skeleton())
+	var scene: PackedScene = load(configured) if not configured.is_empty() else null
 	if scene != null:
 		var model := scene.instantiate() as Node3D
 		_preview.add_child(model)
@@ -1369,10 +1433,30 @@ func _build_preview_figure() -> void:
 	_preview_figure = Node3D.new()
 	_preview_figure.name = "Figure"
 	_preview.add_child(_preview_figure)
-	_preview_skeleton = KimodoSmplx.create_rest_skeleton()
+	_preview_skeleton = KimodoSkeleton.create_rest_skeleton(_reading_skeleton())
 	_preview_figure.add_child(_preview_skeleton)
-	KimodoSmplx.build_mannequin(_preview_skeleton, null)
+	KimodoSkeleton.build_mannequin(_preview_skeleton, null, _reading_skeleton())
 	_preview_retargets = false
+
+
+## Swaps the figure out without rebuilding the viewport around it. The player
+## is kept and re-parented: it holds the animation library, and building a new
+## one would lose the clip that is loaded.
+func _rebuild_preview_figure() -> void:
+	if _preview_figure == null or _preview_player == null:
+		return
+	_preview_player.stop()
+	if _preview_player.has_animation_library(&""):
+		_preview_player.remove_animation_library(&"")
+	_preview_figure.remove_child(_preview_player)
+	_preview.remove_child(_preview_figure)
+	_preview_figure.queue_free()
+	_preview_figure = null
+	_preview_skeleton = null
+
+	_build_preview_figure()
+	_preview_figure.add_child(_preview_player)
+	_reload_preview()
 
 
 ## A ground plane to judge contact against. The camera follows the root, so a
