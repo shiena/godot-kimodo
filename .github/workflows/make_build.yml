@@ -141,6 +141,10 @@ jobs:
           # library and a plain unzip-into-the-project both expect.
           mkdir -p godot-kimodo/addons
           cp -r project/addons/kimodo godot-kimodo/addons/
+          # Apache 2.0 asks for the licence and the notice to travel with what
+          # they cover, and what travels is the folder someone copies into a
+          # project of their own.
+          cp LICENSE NOTICE godot-kimodo/addons/kimodo/
           mkdir -p godot-kimodo/addons/kimodo/bin
           # Every build wrote into bin/<platform>/, so the four of them merge.
           for built in artifacts/kimodo-bin-*/; do

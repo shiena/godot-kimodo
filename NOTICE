@@ -1,0 +1,51 @@
+godot-kimodo
+Copyright 2026 KOGA Mitsuhiro
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the terms.
+
+--------------------------------------------------------------------------------
+
+The release archive bundles binaries built from kimodo.cpp
+(https://github.com/localai-org/kimodo.cpp), Copyright the kimodo.cpp authors,
+licensed under the Apache License, Version 2.0.
+
+Those binaries are built from a modified copy of kimodo.cpp. The modifications
+are the patches under patches/ in this repository, which make the pinned
+revision compile with MSVC: one adds a missing <stdexcept> include, and the
+other converts a std::filesystem::path to a narrow string before handing it to
+a C API that takes one. Neither changes behaviour.
+
+kimodo.cpp carries the following notice:
+
+    kimodo.cpp
+
+    This project uses ggml, Copyright the ggml authors:
+    https://github.com/ggml-org/ggml
+
+    The demo displays the LocalAI logo from the LocalAI project:
+    https://github.com/mudler/LocalAI
+
+--------------------------------------------------------------------------------
+
+The release archive bundles ggml (https://github.com/ggml-org/ggml),
+Copyright (c) 2023-2026 The ggml authors, licensed under the MIT License.
+
+--------------------------------------------------------------------------------
+
+This software is built against godot-cpp
+(https://github.com/godotengine/godot-cpp), Copyright (c) 2017-present Godot
+Engine contributors, licensed under the MIT License.
+
+--------------------------------------------------------------------------------
+
+The SMPL-X rest pose table in src/smplx22.cpp is transcribed from the reference
+implementation in kimodo.cpp, and is covered by that project's licence above.
+
+--------------------------------------------------------------------------------
+
+The model weights are not distributed with this software. It downloads them
+from their published repositories at first use, and they carry terms of their
+own. Read those before using generated motion in anything you ship:
+
+    https://huggingface.co/LocalAI-io/Kimodo-SMPLX-RP-v1-GGML
+    https://huggingface.co/LocalAI-io/Llama-3-Kimodo-GGML

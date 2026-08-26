@@ -109,10 +109,10 @@ Generation runs as a separate process. The text encoder is an 8B LLM2Vec model,
 and sharing the editor's Vulkan device with it would mean competing for VRAM and
 losing the editor to a failed run.
 
-The generator takes seven positional arguments and nothing else: the two model
-paths, the prompt file, length, steps, seed and destination. The two
-classifier-free guidance weights are therefore whatever it was compiled with,
-currently 2.0 each, and exposing them means widening that command line first.
+The dock invokes the generator with seven positional arguments: the two model
+paths, the prompt file, length, steps, seed and destination. Nothing else is
+passed, so the two classifier-free guidance weights are whatever the generator
+was compiled with, currently 2.0 each.
 
 ### Motion
 
@@ -400,10 +400,14 @@ bone map and no import-time rest correction.
 
 ## Licence
 
-godot-kimodo is released into the public domain under
-[the Unlicense](LICENSE.md).
+godot-kimodo is licensed under the [Apache License 2.0](LICENSE), which is also
+what kimodo.cpp is under, so one licence covers the source here and the binaries
+built from it.
 
-The release archive also contains binaries built from kimodo.cpp and from
-[ggml](https://github.com/ggml-org/ggml). ggml is MIT. kimodo.cpp publishes no
-licence file at the pinned revision, so check its terms before redistributing
-those binaries yourself.
+The release archive additionally bundles [ggml](https://github.com/ggml-org/ggml),
+which is MIT. [NOTICE](NOTICE) carries the attributions Apache 2.0 asks for,
+including which files this project patches and why.
+
+The weights are not distributed with the addon. It downloads them from their
+published repositories, and they carry terms of their own; read those before
+shipping anything generated with them.
