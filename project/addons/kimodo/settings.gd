@@ -1,31 +1,36 @@
 @tool
 extends RefCounted
 
-## Where each Kimodo knob lives.
+## Where the Kimodo knobs live.
 ##
-## EditorSettings holds what is true of this machine: where the binaries and the
-## multi-gigabyte weights sit, what this GPU and CPU can take, and a personal
-## access token. None of that belongs in version control, and a teammate on
-## different hardware needs different answers.
+## All of them are editor settings. The addon runs in the editor and never ships
+## in an export, so nothing it configures has to survive into a running game,
+## and almost every answer it needs is about this machine: where the
+## multi-gigabyte weights sit, where generated takes go, what this GPU and CPU
+## can take, and a personal access token. Put any of that in project.godot and a
+## personal answer arrives as a change to a tracked file.
 ##
-## ProjectSettings holds what the project agrees on: which weights to fetch and
-## at which revision, where the shared AnimationLibrary and BoneMap live, and the
-## house defaults for a new clip. Everyone who opens the project should get the
-## same answers, so these travel with project.godot.
-##
-## The line between them is whether two people on one project want the same
-## answer. Somewhere to put gigabytes of generated takes is not that: it is the
-## same kind of answer as where the weights sit, and putting it in project.godot
-## makes one teammate pointing it at another drive a change to a tracked file.
+## The cost is that editor settings belong to the editor rather than to the
+## project, so a res:// path set while one project was open means nothing in the
+## next. bone_map_path() falls back to the bundled sample rather than hand the
+## retargeter a file that is not here.
 ##
 ## The prompt and the seed live in neither. They belong to one invocation.
 
-const EDITOR_PREFIX := "kimodo/"
-const PROJECT_PREFIX := "kimodo/"
+const PREFIX := "kimodo/"
 
-const EDITOR_DEFAULTS := {
+const SAMPLE_BONE_MAP := "res://addons/kimodo/samples/smplx_bone_map.tres"
+
+const DEFAULTS := {
 	"paths/models_dir": "user://kimodo_models",
 	"paths/output_dir": "user://kimodo_out",
+	"paths/library": "res://kimodo_clips.tres",
+	"paths/bone_map": SAMPLE_BONE_MAP,
+	"weights/motion_repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
+	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
+	"weights/revision": "main",
+	"generation/frames": 120,
+	"generation/steps": 30,
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,
 	"runtime/text_layer_chunk": 8,
@@ -35,23 +40,21 @@ const EDITOR_DEFAULTS := {
 	"preview/height": 360,
 }
 
-const PROJECT_DEFAULTS := {
-	"weights/motion_repo": "LocalAI-io/Kimodo-SMPLX-RP-v1-GGML",
-	"weights/text_repo": "LocalAI-io/Llama-3-Kimodo-GGML",
-	"weights/revision": "main",
-	"output/library": "res://kimodo_clips.tres",
-	"generation/frames": 120,
-	"generation/steps": 30,
-	"target/bone_map": "",
-}
-
-## Shown in Project Settings, which is the only UI these get.
-const PROJECT_HINTS := {
+## Only for the Editor Settings dialog. The dock builds its own controls.
+const HINTS := {
+	"paths/models_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
+	"paths/output_dir": {"hint": PROPERTY_HINT_GLOBAL_DIR, "hint_string": ""},
+	"paths/library": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
+	"paths/bone_map": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
 	"weights/revision": {"hint": PROPERTY_HINT_PLACEHOLDER_TEXT, "hint_string": "a branch, tag or commit"},
-	"output/library": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
 	"generation/frames": {"hint": PROPERTY_HINT_RANGE, "hint_string": "16,600,1"},
 	"generation/steps": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,200,1"},
-	"target/bone_map": {"hint": PROPERTY_HINT_FILE, "hint_string": "*.tres,*.res"},
+	"runtime/backend": {"hint": PROPERTY_HINT_ENUM, "hint_string": "auto,cpu"},
+	"runtime/cpu_threads": {"hint": PROPERTY_HINT_RANGE, "hint_string": "0,256,1"},
+	"runtime/text_layer_chunk": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,32,1"},
+	"runtime/gpu_index": {"hint": PROPERTY_HINT_RANGE, "hint_string": "0,15,1"},
+	"download/access_token": {"hint": PROPERTY_HINT_PASSWORD, "hint_string": ""},
+	"preview/height": {"hint": PROPERTY_HINT_RANGE, "hint_string": "160,1200,1"},
 }
 
 ## The layout the upstream download script writes, and therefore the layout
@@ -61,44 +64,33 @@ const MOTION_RELATIVE := "models/kimodo-smplx-rp-v1-f32.gguf"
 const TEXT_BUNDLE_RELATIVE := "generated/llm2vec-text-bundle"
 
 
-static func editor_get(key: String) -> Variant:
+static func get_value(key: String) -> Variant:
 	var settings := EditorInterface.get_editor_settings()
-	var full := EDITOR_PREFIX + key
+	var full := PREFIX + key
 	if not settings.has_setting(full):
-		return EDITOR_DEFAULTS[key]
+		return DEFAULTS[key]
 	return settings.get_setting(full)
 
 
-static func editor_set(key: String, value: Variant) -> void:
-	EditorInterface.get_editor_settings().set_setting(EDITOR_PREFIX + key, value)
+static func set_value(key: String, value: Variant) -> void:
+	EditorInterface.get_editor_settings().set_setting(PREFIX + key, value)
 
 
-static func project_get(key: String) -> Variant:
-	var full := PROJECT_PREFIX + key
-	if not ProjectSettings.has_setting(full):
-		return PROJECT_DEFAULTS[key]
-	return ProjectSettings.get_setting_with_override(full)
-
-
-static func project_set(key: String, value: Variant) -> void:
-	ProjectSettings.set_setting(PROJECT_PREFIX + key, value)
-	ProjectSettings.save()
-
-
-## Declares the project-side settings so they appear in Project Settings even
-## before anyone has changed one.
+## Declares every setting so the Editor Settings dialog lists it with a sensible
+## control, and so the ones the dock has no field for are still reachable.
 static func register() -> void:
-	for key in PROJECT_DEFAULTS:
-		var full: String = PROJECT_PREFIX + key
-		var value: Variant = PROJECT_DEFAULTS[key]
-		if not ProjectSettings.has_setting(full):
-			ProjectSettings.set_setting(full, value)
-		ProjectSettings.set_initial_value(full, value)
+	var settings := EditorInterface.get_editor_settings()
+	for key in DEFAULTS:
+		var full: String = PREFIX + key
+		var value: Variant = DEFAULTS[key]
+		if not settings.has_setting(full):
+			settings.set_setting(full, value)
+		settings.set_initial_value(full, value, false)
 
 		var info := {"name": full, "type": typeof(value)}
-		if PROJECT_HINTS.has(key):
-			info.merge(PROJECT_HINTS[key])
-		ProjectSettings.add_property_info(info)
+		if HINTS.has(key):
+			info.merge(HINTS[key])
+		settings.add_property_info(info)
 
 
 ## kmd-generate as scons bundles it. There is no setting for this: the addon
@@ -116,16 +108,27 @@ static func generator_path() -> String:
 
 ## Absolute path of the motion GGUF under the configured model directory.
 static func motion_gguf_path() -> String:
-	return String(editor_get("paths/models_dir")).path_join(MOTION_RELATIVE)
+	return String(get_value("paths/models_dir")).path_join(MOTION_RELATIVE)
 
 
 static func text_bundle_path() -> String:
-	return String(editor_get("paths/models_dir")).path_join(TEXT_BUNDLE_RELATIVE)
+	return String(get_value("paths/models_dir")).path_join(TEXT_BUNDLE_RELATIVE)
 
 
 ## Where generated takes land. One folder per generation underneath.
 static func output_dir() -> String:
-	return String(editor_get("paths/output_dir"))
+	return String(get_value("paths/output_dir"))
+
+
+## The BoneMap to start from, or an empty string when the rig already uses
+## SkeletonProfileHumanoid names. A stored path that is not in this project came
+## from another one, and the bundled sample is a better answer than a file that
+## does not open.
+static func bone_map_path() -> String:
+	var stored := String(get_value("paths/bone_map"))
+	if stored.is_empty() or FileAccess.file_exists(stored):
+		return stored
+	return SAMPLE_BONE_MAP if FileAccess.file_exists(SAMPLE_BONE_MAP) else ""
 
 
 ## Everything the child process reads from its environment. OS.create_process()
@@ -135,22 +138,22 @@ static func runtime_environment() -> Dictionary:
 	var out := {}
 
 	# kimodo.cpp reads these three.
-	out["KIMODO_TEXT_LAYER_CHUNK"] = str(int(editor_get("runtime/text_layer_chunk")))
+	out["KIMODO_TEXT_LAYER_CHUNK"] = str(int(get_value("runtime/text_layer_chunk")))
 	# Only the exact string "cpu" forces the CPU backend. Every other value,
 	# "gpu" included, means the same as unset: try Vulkan and fall back to CPU
 	# when no device answers. There is no way to require the GPU.
-	out["KIMODO_BACKEND"] = "cpu" if String(editor_get("runtime/backend")) == "cpu" else ""
-	var threads := int(editor_get("runtime/cpu_threads"))
+	out["KIMODO_BACKEND"] = "cpu" if String(get_value("runtime/backend")) == "cpu" else ""
+	var threads := int(get_value("runtime/cpu_threads"))
 	out["KIMODO_THREADS"] = str(threads) if threads > 0 else ""
 
 	# These two are ggml's rather than kimodo's, but the same process reads them.
 	# kimodo.cpp calls ggml_backend_vk_init(0), so choosing a GPU on a machine
 	# with several means reordering which one device 0 is.
-	var gpu := int(editor_get("runtime/gpu_index"))
+	var gpu := int(get_value("runtime/gpu_index"))
 	out["GGML_VK_VISIBLE_DEVICES"] = str(gpu) if gpu > 0 else ""
 	# Lets a buffer land in system memory when device-local VRAM runs out. It
 	# then crosses the PCIe bus on every access, so it buys completion rather
 	# than speed.
-	out["GGML_VK_ALLOW_SYSMEM_FALLBACK"] = "1" if bool(editor_get("runtime/sysmem_fallback")) else ""
+	out["GGML_VK_ALLOW_SYSMEM_FALLBACK"] = "1" if bool(get_value("runtime/sysmem_fallback")) else ""
 
 	return out

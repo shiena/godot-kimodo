@@ -153,8 +153,10 @@ func _build_generate() -> void:
 
 	var numbers := HBoxContainer.new()
 	_body.add_child(numbers)
-	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.project_get("generation/frames")))
-	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.project_get("generation/steps")))
+	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.get_value("generation/frames")))
+	_frames.value_changed.connect(func(value): Settings.set_value("generation/frames", int(value)))
+	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.get_value("generation/steps")))
+	_steps.value_changed.connect(func(value): Settings.set_value("generation/steps", int(value)))
 	_seed = _spin(numbers, "Seed", 0, 1 << 30, 0)
 
 	_generate_button = _button(_body, "Generate", _on_generate)
@@ -199,7 +201,7 @@ func _build_target() -> void:
 	_bone_map_path.placeholder_text = "BoneMap (optional)"
 	_bone_map_path.tooltip_text = "Leave empty when the rig already uses SkeletonProfileHumanoid bone names."
 	_bone_map_path.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bone_map_path.text = String(Settings.project_get("target/bone_map"))
+	_bone_map_path.text = Settings.bone_map_path()
 	_bone_map_path.text_changed.connect(_on_bone_map_changed)
 	bone_map_row.add_child(_bone_map_path)
 	bone_map_row.add_child(_browse(func(): _pick_into(_bone_map_path, true, "*.tres,*.res")))
@@ -244,9 +246,9 @@ func _build_weights() -> void:
 	_section(_setup, "Weights")
 	var source := Label.new()
 	source.text = "Source: kimodo/weights"
-	source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Project Settings under kimodo/weights." % [
-		Settings.project_get("weights/motion_repo"), Settings.project_get("weights/text_repo"),
-		Settings.project_get("weights/revision")]
+	source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Editor Settings under kimodo/weights." % [
+		Settings.get_value("weights/motion_repo"), Settings.get_value("weights/text_repo"),
+		Settings.get_value("weights/revision")]
 	source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
 	_setup.add_child(source)
 
@@ -260,8 +262,8 @@ func _build_weights() -> void:
 	_token.secret = true
 	_token.placeholder_text = "Hugging Face token"
 	_token.tooltip_text = "Only needed for a gated mirror. The published repositories do not ask for one."
-	_token.text = String(Settings.editor_get("download/access_token"))
-	_token.text_changed.connect(func(value): Settings.editor_set("download/access_token", value))
+	_token.text = String(Settings.get_value("download/access_token"))
+	_token.text_changed.connect(func(value): Settings.set_value("download/access_token", value))
 	_setup.add_child(_token)
 
 	_reverify = CheckBox.new()
@@ -297,27 +299,27 @@ func _build_runtime() -> void:
 	_backend.tooltip_text = "Only CPU is forced. The other choice tries Vulkan 1.2 and falls back to the CPU when no device answers, so nothing here can require the GPU."
 	_backend.add_item("Vulkan if present")
 	_backend.add_item("CPU")
-	_backend.selected = 1 if String(Settings.editor_get("runtime/backend")) == "cpu" else 0
+	_backend.selected = 1 if String(Settings.get_value("runtime/backend")) == "cpu" else 0
 	_backend.item_selected.connect(_on_backend_selected)
 	backend_row.add_child(_backend)
 
 	var numbers := HBoxContainer.new()
 	_setup.add_child(numbers)
-	_chunk = _spin(numbers, "Chunk", 1, 32, int(Settings.editor_get("runtime/text_layer_chunk")),
+	_chunk = _spin(numbers, "Chunk", 1, 32, int(Settings.get_value("runtime/text_layer_chunk")),
 			"Text layers held at once, 1 to 32. Fewer lowers peak VRAM and costs speed, but never below the 1002 MiB token embedding.")
-	_chunk.value_changed.connect(func(value): Settings.editor_set("runtime/text_layer_chunk", int(value)))
-	_threads = _spin(numbers, "Threads", 0, 256, int(Settings.editor_get("runtime/cpu_threads")),
+	_chunk.value_changed.connect(func(value): Settings.set_value("runtime/text_layer_chunk", int(value)))
+	_threads = _spin(numbers, "Threads", 0, 256, int(Settings.get_value("runtime/cpu_threads")),
 			"Only applies on the CPU backend. 0 leaves it to the machine.")
-	_threads.value_changed.connect(func(value): Settings.editor_set("runtime/cpu_threads", int(value)))
-	_gpu_index = _spin(numbers, "GPU", 0, 15, int(Settings.editor_get("runtime/gpu_index")),
+	_threads.value_changed.connect(func(value): Settings.set_value("runtime/cpu_threads", int(value)))
+	_gpu_index = _spin(numbers, "GPU", 0, 15, int(Settings.get_value("runtime/gpu_index")),
 			"kimodo.cpp always opens Vulkan device 0, so this reorders which device that is.")
-	_gpu_index.value_changed.connect(func(value): Settings.editor_set("runtime/gpu_index", int(value)))
+	_gpu_index.value_changed.connect(func(value): Settings.set_value("runtime/gpu_index", int(value)))
 
 	_sysmem = CheckBox.new()
 	_sysmem.text = "Spill to system RAM"
 	_sysmem.tooltip_text = "Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access, so it buys completion rather than speed."
-	_sysmem.button_pressed = bool(Settings.editor_get("runtime/sysmem_fallback"))
-	_sysmem.toggled.connect(func(pressed): Settings.editor_set("runtime/sysmem_fallback", pressed))
+	_sysmem.button_pressed = bool(Settings.get_value("runtime/sysmem_fallback"))
+	_sysmem.toggled.connect(func(pressed): Settings.set_value("runtime/sysmem_fallback", pressed))
 	_setup.add_child(_sysmem)
 
 
@@ -329,7 +331,7 @@ func _on_setup_toggled(pressed: bool) -> void:
 
 
 func _on_backend_selected(index: int) -> void:
-	Settings.editor_set("runtime/backend", "cpu" if index == 1 else "auto")
+	Settings.set_value("runtime/backend", "cpu" if index == 1 else "auto")
 
 
 # --- widget helpers ----------------------------------------------------------
@@ -387,7 +389,7 @@ func _path_row(parent: Control, label_text: String, key: String, tooltip: String
 	var edit := LineEdit.new()
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	edit.tooltip_text = tooltip
-	edit.text = String(Settings.editor_get(key))
+	edit.text = String(Settings.get_value(key))
 	edit.text_changed.connect(_on_path_typed.bind(key))
 	row.add_child(edit)
 	row.add_child(_browse(func(): _pick_into(edit, false, "*", key)))
@@ -395,7 +397,7 @@ func _path_row(parent: Control, label_text: String, key: String, tooltip: String
 
 
 func _on_path_typed(value: String, key: String) -> void:
-	Settings.editor_set(key, value)
+	Settings.set_value(key, value)
 	_path_changed(key)
 
 
@@ -441,7 +443,7 @@ func _pick_into(target: LineEdit, file_mode: bool, filter: String = "*", key: St
 func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 	target.text = path
 	if not key.is_empty():
-		Settings.editor_set(key, path)
+		Settings.set_value(key, path)
 	if target == _bone_map_path:
 		_on_bone_map_changed(path)
 	_path_changed(key)
@@ -536,15 +538,15 @@ func _start_download() -> void:
 		_set_message(_download_status, "Set a model directory first.")
 		return
 
-	var revision := String(Settings.project_get("weights/revision"))
+	var revision := String(Settings.get_value("weights/revision"))
 	var repos := [
 		{
-			"repo": String(Settings.project_get("weights/motion_repo")),
+			"repo": String(Settings.get_value("weights/motion_repo")),
 			"revision": revision,
 			"include": [Settings.MOTION_RELATIVE],
 		},
 		{
-			"repo": String(Settings.project_get("weights/text_repo")),
+			"repo": String(Settings.get_value("weights/text_repo")),
 			"revision": revision,
 			"include": [Settings.TEXT_BUNDLE_RELATIVE + "/*"],
 		},
@@ -852,6 +854,7 @@ func _load_motion(dir: String) -> bool:
 
 
 func _on_bone_map_changed(path: String) -> void:
+	Settings.set_value("paths/bone_map", path)
 	_bone_map = null
 	if not path.strip_edges().is_empty():
 		_bone_map = ResourceLoader.load(path, "BoneMap", ResourceLoader.CACHE_MODE_REUSE)
@@ -976,7 +979,7 @@ func _on_save_library() -> void:
 	var animation := _bake()
 	if animation == null:
 		return
-	_save_dialog(String(Settings.project_get("output/library")), _write_library.bind(animation))
+	_save_dialog(String(Settings.get_value("paths/library")), _write_library.bind(animation))
 
 
 func _write_library(path: String, animation: Animation) -> void:
@@ -999,7 +1002,7 @@ func _build_preview() -> void:
 	_preview_container.stretch = true
 	# A ScrollContainer hands every child its minimum height and scrolls the
 	# rest, so expanding does nothing here and the number below is the height.
-	_preview_container.custom_minimum_size = Vector2(0.0, float(Settings.editor_get("preview/height")))
+	_preview_container.custom_minimum_size = Vector2(0.0, float(Settings.get_value("preview/height")))
 	_preview_container.tooltip_text = "Drag to orbit, wheel to zoom."
 	_preview_container.gui_input.connect(_on_preview_input)
 	_body.add_child(_preview_container)
@@ -1178,7 +1181,7 @@ func _on_preview_resized(event: InputEvent) -> void:
 		return
 	var height := clampf(_preview_container.custom_minimum_size.y + event.relative.y, 120.0, 900.0)
 	_preview_container.custom_minimum_size.y = height
-	Settings.editor_set("preview/height", int(height))
+	Settings.set_value("preview/height", int(height))
 	_preview_grip.accept_event()
 
 
@@ -1253,7 +1256,7 @@ func _on_preview_input(event: InputEvent) -> void:
 func _on_open_folder() -> void:
 	var target := _last_saved
 	if target.is_empty() or not FileAccess.file_exists(target):
-		target = String(Settings.project_get("output/library")).get_base_dir()
+		target = String(Settings.get_value("paths/library")).get_base_dir()
 	if target.is_empty():
 		target = "res://"
 

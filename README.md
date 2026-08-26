@@ -152,8 +152,9 @@ check the contents as well, and the question says that instead.
 There is no field for kmd-generate: the addon carries the copy `scons` built,
 and a different one is a matter of replacing that file.
 
-A sample `BoneMap` sits at `addons/kimodo/samples/smplx_bone_map.tres`. It maps
-the humanoid profile onto SMPL-X joint names, which makes
+A sample `BoneMap` sits at `addons/kimodo/samples/smplx_bone_map.tres`, and the
+Target field starts there. It maps the humanoid profile onto SMPL-X joint names,
+which makes
 `KimodoSmplx.create_rest_skeleton()` a valid retarget target and serves as a
 worked example of the format. Regenerate it rather than editing it by hand:
 
@@ -267,19 +268,22 @@ by hand if the output has to match the reference.
 
 ### Where each setting lives
 
-**Editor settings** (`kimodo/`, per machine, never in version control) hold what
-is true of this machine: where the multi-gigabyte weights sit and where
-generated takes go, what this GPU and CPU can take, and a personal access token.
+All of them are editor settings, under `kimodo/` in Editor Settings, and none of
+them is in `project.godot`. The addon runs in the editor and never ships in an
+export, so nothing it configures has to reach a running game, while pointing the
+weights or the output at another drive is nobody else's business and must not
+arrive as a change to a tracked file.
 
-**Project settings** (`kimodo/`, committed in `project.godot`) hold what the
-project agrees on: which repositories to fetch and at which revision, where the
-shared `AnimationLibrary` lives, the house defaults for frames and steps, and
-the project's `BoneMap`.
+`Settings.register()` declares all sixteen when the plugin loads, so the Editor
+Settings dialog lists each one with a range, a file filter or an enum before the
+dock has written anything.
 
-The test is whether two people on one project want the same answer. Somewhere to
-put gigabytes of generated takes is not that, so the output folder is an editor
-setting rather than a project one: pointing it at another drive is nobody else's
-business and must not show up as a change to a tracked file.
+The cost is that editor settings belong to the editor rather than to the
+project, so the two `res://` paths, the shared `AnimationLibrary` and the
+`BoneMap`, carry into the next project opened with the same editor.
+`Settings.bone_map_path()` answers with the bundled sample when the stored path
+is not in this project, rather than hand the retargeter a file that will not
+open.
 
 The prompt and the seed live in neither. They belong to one invocation.
 
