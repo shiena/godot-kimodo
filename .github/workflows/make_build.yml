@@ -112,6 +112,17 @@ jobs:
           path: project/addons/kimodo/bin
           if-no-files-found: error
 
+      # scons copies the SMPL-X converter out of the kimodo.cpp submodule, so
+      # it exists only after a build. It is the same file on every platform,
+      # so one of them carries it.
+      - name: Upload the converter
+        if: matrix.target.platform == 'linux' && matrix.target-type == 'template_release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimodo-scripts
+          path: project/addons/kimodo/scripts
+          if-no-files-found: error
+
   release:
     needs: [prepare, build]
     runs-on: ubuntu-24.04
@@ -128,6 +139,12 @@ jobs:
         with:
           path: artifacts
           pattern: kimodo-bin-*
+
+      - name: Download the converter
+        uses: actions/download-artifact@v4
+        with:
+          name: kimodo-scripts
+          path: artifacts/scripts
 
       - name: Assemble addons/kimodo
         shell: bash
@@ -150,6 +167,10 @@ jobs:
           for built in artifacts/kimodo-bin-*/; do
             cp -r "${built}"* godot-kimodo/addons/kimodo/bin/
           done
+          # Not in the repository: scons copies it out of the submodule, so
+          # the one that ships belongs to the pinned revision.
+          mkdir -p godot-kimodo/addons/kimodo/scripts
+          cp artifacts/scripts/* godot-kimodo/addons/kimodo/scripts/
 
           echo "What ships:"
           find godot-kimodo -type f -printf '%10s  %p\n' | sort -k2
@@ -162,6 +183,13 @@ jobs:
               exit 1
             fi
           done
+
+          # Without it the dock can fetch the SMPL-X checkpoint and then has
+          # nothing to convert it with.
+          if [ ! -f godot-kimodo/addons/kimodo/scripts/convert_motion_to_gguf.py ]; then
+            echo "::error::the SMPL-X converter is not in the archive"
+            exit 1
+          fi
 
           zip -qr "godot-kimodo-v${VERSION}.zip" godot-kimodo/
           ls -l "godot-kimodo-v${VERSION}.zip"
@@ -195,4 +223,6 @@ jobs:
       - name: Delete the intermediate artifacts
         uses: geekyeggo/delete-artifact@v5
         with:
-          name: kimodo-bin-*
+          name: |
+            kimodo-bin-*
+            kimodo-scripts
