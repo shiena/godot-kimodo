@@ -201,10 +201,16 @@ the facing side, because a grey figure cannot show a mirrored clip.
 The preview falls back to procedural capsules when the file is not there, so
 stripping it out leaves the addon working.
 
-**Motion** lists every generation under `kimodo/output/root`, newest first,
-labelled with its prompt and frame count. Picking one is what Target and Save
-then work on, so an older take can be revisited without hunting for its folder.
-`Load folder...` still reads an OUT_DIR from anywhere else.
+**Motion** lists every generation under `kimodo/output/root`, newest first.
+Picking one is what Target and Save then work on, so an older take can be
+revisited without hunting for its folder. `Load folder...` still reads an
+OUT_DIR from anywhere else.
+
+A clip still called `gen_<stamp>` is labelled with its prompt; **Rename** gives
+the folder a name and the list shows that instead, which is the only way to tell
+two takes of one prompt apart. **Delete** sends the folder to the system trash
+rather than removing it, because a clip is minutes of GPU time and a list with a
+Delete button in it is a list someone will misclick.
 
 ### Weights
 

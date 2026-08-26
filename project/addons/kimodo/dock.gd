@@ -40,6 +40,9 @@ var _status: Label
 
 var _clips: OptionButton
 var _clip_dirs := PackedStringArray()
+var _rename_button: Button
+var _delete_button: Button
+var _rename_field: LineEdit
 var _motion_label: Label
 var _target_label: RichTextLabel
 var _bone_map_path: LineEdit
@@ -80,6 +83,7 @@ var _gpu_index: SpinBox
 var _sysmem: CheckBox
 
 var _motion: KimodoMotion
+var _loaded_clip := ""
 var _bone_map: BoneMap
 var _pid := -1
 var _pending_output := ""
@@ -167,6 +171,15 @@ func _build_motion() -> void:
 	refresh.text = "↻"
 	refresh.tooltip_text = "Look again for generated clips."
 	row.add_child(refresh)
+
+	var manage := HBoxContainer.new()
+	_body.add_child(manage)
+	_rename_button = _button(manage, "Rename...", _on_rename_clip,
+			"Rename the folder the clip lives in. Two takes of one prompt are otherwise indistinguishable.")
+	_rename_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_delete_button = _button(manage, "Delete", _on_delete_clip,
+			"Send the clip to the system trash.")
+	_delete_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	_button(_body, "Load folder...", _on_load_folder,
 			"Read an OUT_DIR from somewhere other than the output root.")
@@ -645,6 +658,7 @@ func _refresh_clips() -> void:
 		_clips.add_item("no clips under %s" % root)
 		_clips.set_item_disabled(0, true)
 		_clips.disabled = true
+		_refresh_clip_buttons()
 		return
 
 	_clips.disabled = false
@@ -654,17 +668,23 @@ func _refresh_clips() -> void:
 	# Selecting nothing yet: loading a clip is the user asking for it, not a
 	# side effect of the list refreshing.
 	_clips.select(-1)
+	_refresh_clip_buttons()
 
 
+## A folder still called gen_<stamp> has nothing to say, so it shows its
+## prompt. One that has been renamed shows the name, which is the whole point
+## of renaming it.
 func _clip_label(dir: String) -> String:
-	var prompt := ""
-	var file := FileAccess.open(dir.path_join("prompt.txt"), FileAccess.READ)
-	if file != null:
-		prompt = file.get_as_text().strip_edges().replace("
+	var folder := dir.get_file()
+	var prompt := folder
+	if folder.begins_with("gen_"):
+		var file := FileAccess.open(dir.path_join("prompt.txt"), FileAccess.READ)
+		if file != null:
+			prompt = file.get_as_text().strip_edges().replace("
 ", " ")
-		file.close()
+			file.close()
 	if prompt.is_empty():
-		prompt = dir.get_file()
+		prompt = folder
 	if prompt.length() > 26:
 		prompt = prompt.substr(0, 25) + "…"
 
@@ -677,9 +697,108 @@ func _clip_label(dir: String) -> String:
 
 
 func _on_clip_selected(index: int) -> void:
+	_refresh_clip_buttons()
 	if index < 0 or index >= _clip_dirs.size():
 		return
 	_load_motion(_clip_dirs[index])
+
+
+func _refresh_clip_buttons() -> void:
+	var picked := _selected_clip()
+	_rename_button.disabled = picked.is_empty()
+	_delete_button.disabled = picked.is_empty()
+
+
+func _selected_clip() -> String:
+	var index := _clips.get_selected()
+	return _clip_dirs[index] if index >= 0 and index < _clip_dirs.size() else ""
+
+
+## Renaming the folder rather than storing a label beside it: the folder name is
+## what a person sees in a file manager too, and two takes of one prompt are
+## otherwise the same line twice.
+func _on_rename_clip() -> void:
+	var clip := _selected_clip()
+	if clip.is_empty():
+		return
+	if is_instance_valid(_confirm):
+		_confirm.queue_free()
+	_confirm = ConfirmationDialog.new()
+	_confirm.title = "Rename clip"
+	_confirm.ok_button_text = "Rename"
+	_rename_field = LineEdit.new()
+	_rename_field.text = clip.get_file()
+	_rename_field.custom_minimum_size = Vector2(320.0, 0.0)
+	_confirm.add_child(_rename_field)
+	_confirm.register_text_enter(_rename_field)
+	_confirm.confirmed.connect(_apply_rename.bind(clip))
+	add_child(_confirm)
+	_confirm.popup_centered()
+	_rename_field.select_all()
+	_rename_field.grab_focus()
+
+
+func _apply_rename(clip: String) -> void:
+	var name := _rename_field.text.strip_edges()
+	if name.is_empty():
+		return
+	# validate_filename() sanitises rather than judges, so a difference is the
+	# answer to whether the name was usable, and also what to suggest instead.
+	var usable := name.validate_filename()
+	if name != usable:
+		_set_message(_motion_label, "A folder cannot be called %s. Try %s." % [name, usable])
+		return
+	var destination := clip.get_base_dir().path_join(name)
+	if destination == clip:
+		return
+	if DirAccess.dir_exists_absolute(destination):
+		_set_message(_motion_label, "%s is already there." % name)
+		return
+
+	var error := DirAccess.rename_absolute(clip, destination)
+	if error != OK:
+		_set_message(_motion_label, "Rename failed (%d)." % error)
+		return
+	_refresh_clips()
+	var moved := _clip_dirs.find(destination)
+	if moved >= 0:
+		_clips.select(moved)
+	_refresh_clip_buttons()
+	_set_message(_motion_label, "Renamed to %s." % name)
+
+
+## The trash rather than a delete: a clip is minutes of GPU time, and a list
+## with a Delete button next to it is a list someone will misclick.
+func _on_delete_clip() -> void:
+	var clip := _selected_clip()
+	if clip.is_empty():
+		return
+	if is_instance_valid(_confirm):
+		_confirm.queue_free()
+	_confirm = ConfirmationDialog.new()
+	_confirm.title = "Delete clip"
+	_confirm.ok_button_text = "Move to trash"
+	_confirm.dialog_text = "%s goes to the system trash.
+
+%s" % [clip.get_file(), clip]
+	_confirm.confirmed.connect(_apply_delete.bind(clip))
+	add_child(_confirm)
+	_confirm.popup_centered()
+
+
+func _apply_delete(clip: String) -> void:
+	var error := OS.move_to_trash(ProjectSettings.globalize_path(clip))
+	if error != OK:
+		_set_message(_motion_label, "Could not move %s to the trash (%d)." % [clip.get_file(), error])
+		return
+	if _loaded_clip == clip:
+		_motion = null
+		_loaded_clip = ""
+		_reload_preview()
+		_set_message(_motion_label, "No motion loaded.")
+	_refresh_clips()
+	_refresh_clip_buttons()
+	_set_message(_status, "%s is in the trash." % clip.get_file())
 
 
 func _on_load_folder() -> void:
@@ -701,6 +820,7 @@ func _load_motion(dir: String) -> bool:
 		_set_message(_motion_label, "Failed to load %s." % dir)
 		return false
 	_motion = motion
+	_loaded_clip = dir
 	_reload_preview()
 	_set_message(_motion_label, "%d frames, %.2f s at %.0f fps\n%s" % [motion.get_frame_count(),
 			motion.get_duration(), motion.get_fps(), dir])
