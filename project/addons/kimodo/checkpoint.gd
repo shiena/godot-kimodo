@@ -65,14 +65,33 @@ func _run_conversion(models_dir: String, token: String, output: String) -> Strin
 	if not _has_curl():
 		return "curl was not found on PATH. It ships with Windows 10 and later, macOS and most Linux distributions."
 
-	var interpreter := find_interpreter()
-	if interpreter.is_empty():
-		return ("No Python was found. The converter needs %d.%d or later, or uv to supply one."
-				% [MINIMUM_PYTHON.x, MINIMUM_PYTHON.y])
-
-	var script := ProjectSettings.globalize_path(CONVERTER)
 	if not FileAccess.file_exists(CONVERTER):
 		return "%s is missing. It is copied into the addon by scons, so a source build needs to have run." % CONVERTER
+	var script := ProjectSettings.globalize_path(CONVERTER)
+
+	var interpreter := find_interpreter()
+	if interpreter.is_empty():
+		return ("No Python was found on PATH. The converter needs %d.%d or later. Install one, or install uv "
+				+ "and it will supply its own.") % [MINIMUM_PYTHON.x, MINIMUM_PYTHON.y]
+
+	# Before the gigabyte rather than after it. A version string says an
+	# interpreter exists; running the converter says it can be run, which is
+	# the question. It also makes uv fetch its Python now, while there is
+	# nothing to lose by waiting.
+	_current_label = "checking the converter runs"
+	_current_part = ""
+	_current_item_bytes = 0
+	var probe := interpreter.duplicate()
+	probe.append(script)
+	probe.append("--help")
+	var probe_program: String = probe[0]
+	probe.remove_at(0)
+	var probe_code := await _run_process(probe_program, probe, "")
+	if _cancelled:
+		return "Cancelled."
+	if probe_code != 0:
+		return "%s cannot run the converter (exited with %d). Try it by hand: %s %s" % [
+				probe_program, probe_code, probe_program, " ".join(probe)]
 
 	var info := await _repo_info(token)
 	if info.has("error"):
@@ -187,22 +206,24 @@ func _repo_info(token: String) -> Dictionary:
 ## its own.
 static func find_interpreter() -> PackedStringArray:
 	for name in ["python3", "python"]:
-		if _python_version(name) >= MINIMUM_PYTHON:
-			return PackedStringArray([name])
-	var output := []
-	if OS.execute("uv", ["--version"], output, false) == 0:
-		# --no-project or uv walks up looking for a pyproject.toml that has
-		# nothing to do with this.
-		return PackedStringArray(["uv", "run", "--no-project", "--python", "3.12"])
-	return PackedStringArray()
+		var found := on_path(name)
+		if not found.is_empty() and python_version(found) >= MINIMUM_PYTHON:
+			return PackedStringArray([found])
+	var uv := on_path("uv")
+	if uv.is_empty():
+		return PackedStringArray()
+	# --no-project, or uv walks up looking for a pyproject.toml that has
+	# nothing to do with this.
+	return PackedStringArray([uv, "run", "--no-project", "--python", "3.12"])
 
 
-static func _python_version(name: String) -> Vector2i:
+## Zero for anything that does not answer with a version, which on Windows
+## includes the Microsoft Store stub that sits on PATH pretending to be Python
+## until someone installs one.
+static func python_version(program: String) -> Vector2i:
 	var output := []
-	if OS.execute(name, ["--version"], output, true) != 0 or output.is_empty():
+	if OS.execute(program, ["--version"], output, true) != 0 or output.is_empty():
 		return Vector2i.ZERO
-	# "Python 3.9.13", and on some installs a Windows Store stub answers with
-	# nothing useful at all.
 	var fields := String(output[0]).strip_edges().split(" ")
 	if fields.size() < 2:
 		return Vector2i.ZERO

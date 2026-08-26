@@ -259,8 +259,25 @@ func _emit_progress() -> void:
 
 
 func _has_curl() -> bool:
-	var output := []
-	return OS.execute("curl", ["--version"], output, false) == 0
+	return not on_path("curl").is_empty()
+
+
+## Where a program is on PATH, or an empty string.
+##
+## OS.execute() logs a red engine error with a backtrace for a program that is
+## not there, so asking after something absent by running it answers a question
+## with what reads as a fault. Looking for the SMPL-X interpreter tries three
+## names and would print three of them. Walking PATH answers the same question
+## and says nothing.
+static func on_path(name: String) -> String:
+	var windows := OS.get_name() == "Windows"
+	var suffixes := PackedStringArray([".exe", ".cmd", ".bat"]) if windows else PackedStringArray([""])
+	for directory in OS.get_environment("PATH").split(";" if windows else ":", false):
+		for suffix in suffixes:
+			var candidate := directory.strip_edges().path_join(name + suffix)
+			if FileAccess.file_exists(candidate):
+				return candidate
+	return ""
 
 
 func _blob_url(repo: String, revision: String, path: String) -> String:
