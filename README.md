@@ -153,8 +153,13 @@ else in the pane follows it: which GGUF has to be on disk, which repository
 serves it, and which mannequin stands in for the rig in **Preview**.
 
 **Convert SMPL-X...** is enabled only for the model nobody may publish, and
-says so on the other two. **Model page** opens whichever model is selected on
-Hugging Face, which for SMPL-X is where the licence has to be accepted.
+says so on the other two.
+
+With SMPL-X picked, a note above the token field says what the conversion asks
+for: a Hugging Face token, and Python 3.9 or later, or uv. **Model page** sits
+beside it and opens that gated model on Hugging Face, which is where the
+licence is accepted and the token minted. Both belong to SMPL-X alone, so both
+are gone on the other two.
 
 **Weights** fetches the configured repositories and checks every file against
 their manifests. A repository that will not serve its manifest costs its own
@@ -182,7 +187,23 @@ with Windows 10 and later, macOS, and effectively every Linux distribution.
 curl resumes a partial file, which over 15 GiB matters: a dropped connection is
 a question of when.
 
-**Runtime** is described under [Runtime environment](#runtime-environment).
+**Runtime** is how the generator uses the machine. What each control sets in
+the environment is listed under [Runtime environment](#runtime-environment);
+three of them are worth a word here.
+
+**Chunk** is how many of the text encoder's 32 layers are held at once, from 1
+to 32, and 8 by default. The encoder frees each chunk before loading the next,
+so a smaller number lowers the peak and costs speed. It cannot lower it past
+the 1002 MiB token embedding, which is a single tensor and loads whole whatever
+this says.
+
+**Threads** applies on the CPU backend and nowhere else. 0, the default, leaves
+the count to the machine.
+
+**GPU** picks which Vulkan device generates. kimodo.cpp always opens device 0,
+so this reorders the list rather than choosing from it: 2 hides the others, and
+what was device 2 becomes the only device there is. At 0 nothing is set, and
+every device stays visible in its own order.
 
 ### Generate
 
