@@ -47,7 +47,6 @@ var _body: VBoxContainer
 var _setup_toggle: Button
 var _setup: VBoxContainer
 var _skeleton: OptionButton
-var _source: Label
 var _convert_button: Button
 var _page_button: Button
 var _convert_row: HBoxContainer
@@ -368,11 +367,6 @@ func _build_weights() -> void:
 	add_child(_checkpoint)
 	_checkpoint.progress.connect(_on_download_progress)
 	_checkpoint.finished.connect(_on_convert_finished)
-
-	_source = Label.new()
-	_source.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.75))
-	_setup.add_child(_source)
-	_refresh_source()
 
 	_presence = RichTextLabel.new()
 	_presence.bbcode_enabled = true
@@ -745,19 +739,11 @@ func _on_convert_finished(ok: bool, message: String) -> void:
 	_refresh_presence()
 
 
-func _refresh_source() -> void:
-	_source.text = "Source: kimodo/weights"
-	_source.tooltip_text = "%s\n%s\nat %s\n\nChange them in Editor Settings under kimodo/weights." % [
-			Settings.motion_repo(), Settings.get_value("weights/text_repo"),
-			Settings.get_value("weights/revision")]
-
-
-## Changing the model changes which file has to be on disk, which repository
-## serves it, and what the preview should stand in with, so all three are asked
-## again rather than left describing the previous choice.
+## Changing the model changes which file has to be on disk, whether that file
+## can be downloaded at all, and what the preview should stand in with, so each
+## is asked again rather than left describing the previous choice.
 func _on_skeleton_selected(p_index: int) -> void:
 	Settings.set_value("weights/skeleton", String(_skeleton.get_item_metadata(p_index)))
-	_refresh_source()
 	_refresh_buttons()
 	_refresh_presence()
 	_refresh_target()
