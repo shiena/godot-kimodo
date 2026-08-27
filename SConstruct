@@ -87,6 +87,14 @@ if ARGUMENTS.get("kimodo_native", "yes") not in ("no", "false", "0"):
         # CMake keeps its own dependency graph, and it is the one that knows
         # about GGML's sources and shaders.
         env.AlwaysBuild(native)
+        # kmd-generate is the only target declared here, but the CMake build
+        # also writes the four ggml libraries it loads into the same folder.
+        # SCons does not know about those, so a cache hit on the executable
+        # alone restores it without running CMake and the libraries never
+        # arrive. A release built that way ships a generator that cannot
+        # start. CacheDir is on whenever SCONS_CACHE is set, which is every CI
+        # build.
+        env.NoCache(native)
         default_args.append(native)
 
 Default(*default_args)

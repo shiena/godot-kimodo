@@ -191,6 +191,22 @@ jobs:
             exit 1
           fi
 
+          # kmd-generate loads the ggml libraries from beside itself. An
+          # archive carrying the one without the others installs cleanly and
+          # then refuses to generate, which is a worse failure than not
+          # publishing.
+          for platform in linux windows; do
+            bin="godot-kimodo/addons/kimodo/bin/${platform}"
+            if ! find "$bin" -name 'kmd-generate*' -print -quit | grep -q .; then
+              echo "::error::no ${platform} generator in the archive"
+              exit 1
+            fi
+            if ! find "$bin" -name '*ggml*' -print -quit | grep -q .; then
+              echo "::error::the ${platform} generator has none of the ggml libraries it loads"
+              exit 1
+            fi
+          done
+
           zip -qr "godot-kimodo-v${VERSION}.zip" godot-kimodo/
           ls -l "godot-kimodo-v${VERSION}.zip"
 

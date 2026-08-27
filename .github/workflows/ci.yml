@@ -75,3 +75,22 @@ jobs:
       - name: Show what came out
         shell: bash
         run: ls -l project/addons/kimodo/bin/${{ matrix.target.platform }}/
+
+      # kmd-generate loads the ggml libraries from beside itself, so a build
+      # that produced the one and not the others is a build that cannot run.
+      # It has happened: the libraries are written straight into the addon by
+      # CMake, and a scons cache hit on the executable alone used to skip
+      # CMake entirely.
+      - name: Check the generator has its libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="project/addons/kimodo/bin/${{ matrix.target.platform }}"
+          if ! find "$bin" -name 'kmd-generate*' -print -quit | grep -q .; then
+            echo "kmd-generate was not built, so it needs nothing beside it."
+            exit 0
+          fi
+          if ! find "$bin" -name '*ggml*' -print -quit | grep -q .; then
+            echo "::error::kmd-generate was built without the ggml libraries it loads"
+            exit 1
+          fi
