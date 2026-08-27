@@ -50,6 +50,7 @@ var _skeleton: OptionButton
 var _source: Label
 var _convert_button: Button
 var _page_button: Button
+var _convert_row: HBoxContainer
 var _checkpoint: Node
 
 var _prompt: TextEdit
@@ -379,6 +380,27 @@ func _build_weights() -> void:
 	_presence.custom_minimum_size = Vector2(0.0, 40.0)
 	_setup.add_child(_presence)
 
+	# Above the two controls it is about, so it is read before the token field
+	# is skipped as optional and before Convert is pressed without a Python.
+	#
+	# Model page rides on the same line, because the note names a token nobody
+	# can mint without going there, and because the two appear and go together:
+	# a page whose licence has to be accepted is a thing only SMPL-X has.
+	_convert_row = HBoxContainer.new()
+	_setup.add_child(_convert_row)
+	var notice := _notice(_convert_row,
+			"Converting SMPL-X needs a Hugging Face token below, and Python 3.9 or later, or uv.",
+			3,
+			("The licence is accepted on the model page, and the token is minted there too.\n\n"
+			+ "A Python already on PATH is used. uv is the answer for a machine without one: "
+			+ "it downloads its own.\n\nSOMA and G1 are published as GGUF and need neither."))
+	notice.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_page_button = _button(_convert_row, "Model page", _on_open_model_page,
+			("Open SMPL-X on Hugging Face. That is where its licence is accepted and a token "
+			+ "minted, neither of which anything here can do for you."))
+	# A button as tall as three lines of note reads as a panel, not a button.
+	_page_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
 	_token = LineEdit.new()
 	_token.secret = true
 	_token.placeholder_text = "Hugging Face token"
@@ -401,15 +423,10 @@ func _build_weights() -> void:
 	_cancel_button = _button(buttons, "Cancel", func(): _cancel_transfer())
 	_cancel_button.disabled = true
 
-	# A second row: four buttons across a dock this narrow leaves each of them
-	# too small to read.
-	var extras := HBoxContainer.new()
-	_setup.add_child(extras)
-	_convert_button = _button(extras, "Convert SMPL-X...", _on_convert,
+	# A line of its own: two buttons across a dock this narrow leaves each of
+	# them too small to read.
+	_convert_button = _button(_setup, "Convert SMPL-X...", _on_convert,
 			"Fetch the gated checkpoint and run kimodo.cpp's converter on it. About 1.13 GiB down and the same again on disk. Needs a Hugging Face token and Python 3.9 or later, or uv.")
-	_convert_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_page_button = _button(extras, "Model page", _on_open_model_page,
-			"Open the model on Hugging Face. For SMPL-X this is where the licence is accepted and a token is minted, which nothing here can do for you.")
 
 	_download_bar = ProgressBar.new()
 	_download_bar.max_value = 1.0
@@ -511,6 +528,50 @@ func _message(parent: Control, lines: int) -> Label:
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	parent.add_child(label)
 	return label
+
+
+## A sentence that wraps, in a panel tinted the editor's warning colour.
+##
+## Everything else long in this dock lives in a tooltip, and this is the one
+## place that cannot: a tooltip is found by someone who already suspects there
+## is something to hover, and both of these are requirements you would
+## otherwise meet by failing. It costs `lines` lines at the very most, which is
+## why it is spent on the model that has them rather than shown to everyone.
+##
+## Past that cap the sentence is trimmed rather than the box growing, so the
+## text has to say its two nouns early and leave the rest to the tooltip.
+func _notice(parent: Control, text: String, lines: int, tooltip: String = "") -> PanelContainer:
+	var accent := Color(0.9, 0.65, 0.25)
+	var editor_theme := EditorInterface.get_editor_theme()
+	if editor_theme != null and editor_theme.has_color(&"warning_color", &"Editor"):
+		accent = editor_theme.get_color(&"warning_color", &"Editor")
+
+	var frame := PanelContainer.new()
+	frame.tooltip_text = tooltip
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(accent.r, accent.g, accent.b, 0.10)
+	box.set_border_width_all(1)
+	box.border_color = Color(accent.r, accent.g, accent.b, 0.45)
+	box.set_corner_radius_all(3)
+	box.set_content_margin_all(6.0)
+	frame.add_theme_stylebox_override(&"panel", box)
+	parent.add_child(frame)
+
+	var label := Label.new()
+	label.text = text
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Wrapping alone has no ceiling: the narrower the dock, the more lines the
+	# same sentence takes, and a Label asks for every one of them. The dock is
+	# resizable, so that is a box which grows without bound as it is pulled in.
+	# A line cap is what bounds it, and it only bounds anything with the trim
+	# set: Label caps its minimum height against max_lines_visible only when it
+	# has somewhere to put the overflow.
+	label.max_lines_visible = lines
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_color_override(&"font_color", accent)
+	frame.add_child(label)
+	return frame
 
 
 func _path_row(parent: Control, label_text: String, key: String, tooltip: String,
@@ -636,6 +697,10 @@ func _motion_is_unobtainable(p_missing: PackedStringArray) -> bool:
 func _refresh_buttons() -> void:
 	var published: bool = bool(Settings.skeleton_entry()["published"])
 	_convert_button.disabled = published or _downloader.is_busy() or _checkpoint.is_busy()
+	# A token, a Python and a licence to accept are asked for by the conversion
+	# and by nothing else, so the line carrying all three goes when the picked
+	# model has none of them to ask.
+	_convert_row.visible = not published
 	if published:
 		_convert_button.tooltip_text = ("%s is published as a GGUF, so Download fetches it and there is nothing "
 				+ "to convert.") % Settings.skeleton_entry()["label"]
@@ -644,6 +709,8 @@ func _refresh_buttons() -> void:
 				+ "1.13 GiB down and the same again on disk. Needs a Hugging Face token and Python 3.9 or later, or uv.")
 
 
+## The button is only up for the model that has to be converted, so the entry
+## the picker is on is that model's, and there is no second page to reach.
 func _on_open_model_page() -> void:
 	OS.shell_open(String(Settings.skeleton_entry()["page"]))
 

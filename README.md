@@ -153,8 +153,13 @@ else in the pane follows it: which GGUF has to be on disk, which repository
 serves it, and which mannequin stands in for the rig in **Preview**.
 
 **Convert SMPL-X...** is enabled only for the model nobody may publish, and
-says so on the other two. **Model page** opens whichever model is selected on
-Hugging Face, which for SMPL-X is where the licence has to be accepted.
+says so on the other two.
+
+With SMPL-X picked, a note above the token field says what the conversion asks
+for: a Hugging Face token, and Python 3.9 or later, or uv. **Model page** sits
+beside it and opens that gated model on Hugging Face, which is where the
+licence is accepted and the token minted. Both belong to SMPL-X alone, so both
+are gone on the other two.
 
 **Weights** fetches the configured repositories and checks every file against
 their manifests. A repository that will not serve its manifest costs its own
