@@ -187,7 +187,23 @@ with Windows 10 and later, macOS, and effectively every Linux distribution.
 curl resumes a partial file, which over 15 GiB matters: a dropped connection is
 a question of when.
 
-**Runtime** is described under [Runtime environment](#runtime-environment).
+**Runtime** is how the generator uses the machine. What each control sets in
+the environment is listed under [Runtime environment](#runtime-environment);
+three of them are worth a word here.
+
+**Chunk** is how many of the text encoder's 32 layers are held at once, from 1
+to 32, and 8 by default. The encoder frees each chunk before loading the next,
+so a smaller number lowers the peak and costs speed. It cannot lower it past
+the 1002 MiB token embedding, which is a single tensor and loads whole whatever
+this says.
+
+**Threads** applies on the CPU backend and nowhere else. 0, the default, leaves
+the count to the machine.
+
+**GPU** picks which Vulkan device generates. kimodo.cpp always opens device 0,
+so this reorders the list rather than choosing from it: 2 hides the others, and
+what was device 2 becomes the only device there is. At 0 nothing is set, and
+every device stays visible in its own order.
 
 ### Generate
 
