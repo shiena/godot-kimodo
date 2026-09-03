@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/animation.hpp>
 #include <godot_cpp/classes/global_constants.hpp>
 #include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/node_path.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
@@ -28,6 +29,7 @@ class KimodoMotion : public Resource {
 
 	PackedFloat32Array local_rotations;
 	PackedFloat32Array root_positions;
+	Dictionary recipe;
 	int frame_count = 0;
 	double fps = 30.0;
 	const skeletons::Definition *skeleton = &skeletons::smplx22();
@@ -57,6 +59,13 @@ public:
 	void set_local_rotations_raw(const PackedFloat32Array &p_value);
 	PackedFloat32Array get_root_positions_raw() const { return root_positions; }
 	void set_root_positions_raw(const PackedFloat32Array &p_value);
+
+	// What produced this clip: the prompts, their lengths, the steps and seed,
+	// and the model that ran. Carried rather than interpreted, because the two
+	// files kmd-generate writes say nothing about the run that wrote them and
+	// a clip that cannot name its own seed cannot be made again.
+	Dictionary get_recipe() const { return recipe; }
+	void set_recipe(const Dictionary &p_recipe);
 
 	Quaternion get_local_rotation(int p_frame, int p_joint) const;
 	Vector3 get_root_position(int p_frame) const;

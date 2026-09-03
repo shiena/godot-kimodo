@@ -125,7 +125,8 @@ with the wrong model in the picker still loads as what it actually is.
    `Skeleton3D` and reports how many of the joints it could map.
 6. Name the clip under **Save**, then click **Bake** to put it on an
    `AnimationPlayer` in that scene. **Save clip** writes it out as a resource
-   instead.
+   instead, and **Save motion** keeps the take itself so it can be baked onto
+   another rig later.
 
 ## The dock
 
@@ -347,13 +348,19 @@ offers to match it against a skeleton automatically.
 
 ### Save
 
-Both buttons retarget onto the skeleton Target resolved, and differ only in
-where the result goes. **Bake** puts it on an `AnimationPlayer` in the open
-scene. **Save clip** writes it as a standalone resource, and reveals it in the
-FileSystem dock afterwards.
+**Bake** and **Save clip** both retarget onto the skeleton Target resolved, and
+differ only in where the result goes. Bake puts it on an `AnimationPlayer` in
+the open scene. Save clip writes it as a standalone resource, and reveals it in
+the FileSystem dock afterwards.
 
 Both need a `Skeleton3D` in the open scene, because an animation's track paths
 are that skeleton's path within it.
+
+**Save motion** needs neither. It writes the take itself, before any
+retargeting, as a [`.kimodo` clip](#the-clip-file) in the project. That is what
+makes a generation outlive the session that produced it: an `Animation` is
+already committed to one rig, and the folder the generator wrote cannot be
+committed at all.
 
 **Clip name** names the animation and suggests the file name. The two sets of
 rules differ, so it is checked against both. An `AnimationLibrary` rejects `,`
@@ -384,6 +391,43 @@ on the floor without adjustment. Its left limbs are warm and its right limbs
 cold, with a marker on the face, because a uniformly grey figure cannot show a
 mirrored clip. Removing the model leaves the addon working: the preview falls
 back to procedural capsules.
+
+## The clip file
+
+A run leaves two headerless `.f32` buffers in a folder named after the second it
+started, under the output directory. Nothing in that folder records the seed or
+the model. That is enough to play a take back and not enough to keep one.
+
+A `.kimodo` file is those two buffers with the recipe in front of them:
+
+| Field | |
+|---|---|
+| `prompts`, `lengths`, `transition` | the sequence as it was typed |
+| `steps`, `seed` | what the sampler was given |
+| `skeleton`, `motion_repo`, `text_repo`, `revision` | which weights ran |
+| `checkpoint` | for a converted SMPL-X, the checkpoint revision the GGUF came from |
+| `hash` | sha256 of all of the above; two runs of one recipe hash alike |
+| `generated` | when it ran, in UTC |
+
+The same recipe is written into the generation folder as `recipe.json` before
+the generator starts, so a run that crashes still says what was asked of it, and
+a clip loaded from an older folder simply has no recipe rather than being
+refused.
+
+The addon registers an importer for the extension, so a `.kimodo` file in the
+project behaves like any other asset: it has a UID, `load()` returns a
+`KimodoMotion`, and the Import dock carries its settings. The import is a format
+conversion and never runs the generator. Godot reimports on its own, when a
+project is opened and whenever a source file changes, and an importer that
+generated would answer a fresh checkout by taking the GPU for an hour.
+
+One import setting so far, **fps**, which overrides the 30 frames a second the
+model generates at. Zero, the default, leaves it alone.
+
+There is no checksum of the weights. Hashing a gigabyte of GGUF on every run
+costs seconds to repeat what the repository and revision already say, and for
+the one model that has no revision the `checkpoint` line names those bytes
+instead.
 
 ## Settings
 
@@ -552,16 +596,19 @@ godot --headless --path project --import
 godot --headless --path project -s res://tools/verify_stage1.gd
 godot --headless --path project -s res://tools/verify_stage2.gd
 godot --headless --path project -s res://tools/verify_stage4.gd
+godot --headless --path project -s res://tools/verify_clip_file.gd
 ```
 
 Stage 1 covers the file layout, quaternion component order, forward kinematics,
 and that a baked `Animation` drives the bones its tracks name. Stage 2 covers
 retargeting: a rig with prefixed bone names behind a `BoneMap`, rest rotations
 that are not identity, and an unmapped twist bone between two mapped ones.
-Stage 4 covers saving and library management.
+Stage 4 covers saving and library management. The clip file check round-trips a
+motion through the `.kimodo` container and then feeds the reader a foreign file,
+a newer version, and a payload that stops early.
 
-All three run against a synthetic fixture, so they confirm the wiring and
-nothing about the model's own conventions.
+All four run against a synthetic fixture, so they confirm the wiring and nothing
+about the model's own conventions.
 
 ### The preview scene
 

@@ -25,6 +25,7 @@ extends ScrollContainer
 const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
 const Checkpoint := preload("res://addons/kimodo/checkpoint.gd")
+const ClipFile := preload("res://addons/kimodo/clip_file.gd")
 ## Why a download that fetched everything on offer can still leave one file
 ## missing. LocalAI-io withdrew the converted SMPL-X weights after reading the
 ## upstream NVIDIA licence, which forbids distributing a derivative model, so
@@ -328,6 +329,8 @@ func _build_save() -> void:
 	_button(_body, "Bake", _on_apply, "Retarget onto the Skeleton3D under Target and put it on an AnimationPlayer in the open scene.")
 	_button(_body, "Save clip...", _on_save_clip,
 			"Retarget onto the Skeleton3D under Target and write the Animation as a standalone resource.")
+	_button(_body, "Save motion...", _on_save_motion,
+			"Write the motion and the recipe that made it into the project as a .kimodo clip. No rig and no retargeting: it is the take itself, importable and rebakeable onto anything later.")
 	# Bake and Save clip used to answer on the Generate line, three sections
 	# up and usually scrolled out of sight, which made a refusal look like a
 	# button that did nothing. It carries a resting line the way Motion does:
@@ -974,6 +977,11 @@ func _on_generate() -> void:
 	# whole sequence on one line whatever the shape of the run.
 	if not _write_text(out_dir.path_join("prompt.txt"), " -> ".join(prompts)):
 		return
+	# Written before the generator starts rather than after it finishes, so a
+	# run that crashes still leaves behind what was asked of it.
+	if not _write_text(out_dir.path_join("recipe.json"),
+			JSON.stringify(_recipe(prompts, lengths, transition), "\t")):
+		return
 	var paths := PackedStringArray()
 	for index in prompts.size():
 		if prompts.size() == 1:
@@ -992,6 +1000,37 @@ func _on_generate() -> void:
 	_generate_button.disabled = true
 	_set_message(_status, "Generating %d frames from %d prompt%s into %s ..." % [
 			total, prompts.size(), "" if prompts.size() == 1 else "s", out_dir])
+
+
+## What the run was, in the form a clip carries. Everything here is known before
+## the generator starts, so nothing has to be read back out of its output.
+##
+## The revision is the setting rather than a commit resolved against Hugging
+## Face: it is what the download asked for, and asking again at generation time
+## would put a network call in front of the GPU.
+func _recipe(prompts: PackedStringArray, lengths: PackedInt32Array, transition: int) -> Dictionary:
+	var key := Settings.skeleton()
+	var recipe := {
+		"prompts": Array(prompts),
+		"lengths": Array(lengths),
+		# A single prompt has nothing to transition to, and recording the spin
+		# box anyway would make two clips differ over a number neither used.
+		"transition": transition if prompts.size() > 1 else 0,
+		"steps": int(_steps.value),
+		"seed": int(_seed.value),
+		"skeleton": key,
+		"motion_repo": Settings.motion_repo(key),
+		"text_repo": String(Settings.get_value("weights/text_repo")),
+		"revision": String(Settings.get_value("weights/revision")),
+	}
+	# A converted SMPL-X GGUF was never downloaded, so no repository revision
+	# names those bytes. The checkpoint it came from is what does, and
+	# checkpoint.gd wrote it down at conversion time for exactly this.
+	var pinned := Checkpoint.checkpoint_dir(
+			String(Settings.get_value("paths/models_dir"))).path_join("REVISION")
+	if key == "smplx22" and FileAccess.file_exists(pinned):
+		recipe["checkpoint"] = FileAccess.get_file_as_string(pinned).strip_edges()
+	return ClipFile.stamp(recipe)
 
 
 ## The generator reads two shapes off one command line and tells them apart by
@@ -1248,6 +1287,13 @@ func _load_motion(dir: String) -> bool:
 		_reload_preview()
 		_set_message(_motion_label, "Failed to load %s." % dir)
 		return false
+	# Older takes have no recipe.json, and a clip that cannot say how it was made
+	# is still a clip. It loads with an empty recipe rather than being refused.
+	var recipe = JSON.parse_string(
+			FileAccess.get_file_as_string(dir.path_join("recipe.json")))
+	if recipe is Dictionary:
+		motion.recipe = recipe
+
 	_motion = motion
 	_loaded_clip = dir
 	_reload_preview()
@@ -1485,6 +1531,34 @@ func _write_clip(path: String, animation: Animation) -> void:
 	# before select_file(), because the dock refuses to navigate to a path it
 	# has not been told about and a full scan() would not have finished by then.
 	EditorInterface.get_resource_filesystem().update_file(path)
+	EditorInterface.select_file(path)
+
+
+## The clip rather than an Animation: no rig, no retargeting, and the recipe
+## still attached. This is what makes a take survive the session that produced
+## it, so it takes the same name as Bake and Save clip and lands in the project
+## beside them.
+func _on_save_motion() -> void:
+	if _motion == null:
+		_set_message(_save_label, "Load or generate a motion first.")
+		return
+	var name := _clip_stem()
+	if name.is_empty():
+		return
+	_save_dialog("res://%s.kimodo" % name, _write_motion, PackedStringArray(["*.kimodo"]))
+
+
+func _write_motion(path: String) -> void:
+	var error := ClipFile.write(path, _motion)
+	if error != OK:
+		_set_message(_save_label, "Saving %s failed (%d). See the Output log." % [path, error])
+		return
+	_set_message(_save_label, "Saved %s." % path)
+	# Unlike an Animation resource, this one has an importer waiting for it, and
+	# update_file() only says the file is there. The scan is what runs the
+	# import, so select_file() lands on a clip rather than on a broken entry.
+	EditorInterface.get_resource_filesystem().update_file(path)
+	EditorInterface.get_resource_filesystem().scan()
 	EditorInterface.select_file(path)
 
 
@@ -1826,13 +1900,14 @@ func _on_preview_input(event: InputEvent) -> void:
 		_preview_container.accept_event()
 
 
-func _save_dialog(default_path: String, on_selected: Callable) -> void:
+func _save_dialog(default_path: String, on_selected: Callable,
+		filters := PackedStringArray(["*.tres", "*.res"])) -> void:
 	if is_instance_valid(_dialog):
 		_dialog.queue_free()
 	_dialog = FileDialog.new()
 	_dialog.access = FileDialog.ACCESS_RESOURCES
 	_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	_dialog.filters = PackedStringArray(["*.tres", "*.res"])
+	_dialog.filters = filters
 	_dialog.current_path = default_path
 	_dialog.size = Vector2i(720, 480)
 	_dialog.file_selected.connect(on_selected)

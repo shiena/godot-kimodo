@@ -50,6 +50,8 @@ void KimodoMotion::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_local_rotations_raw", "value"), &KimodoMotion::set_local_rotations_raw);
 	ClassDB::bind_method(D_METHOD("get_root_positions_raw"), &KimodoMotion::get_root_positions_raw);
 	ClassDB::bind_method(D_METHOD("set_root_positions_raw", "value"), &KimodoMotion::set_root_positions_raw);
+	ClassDB::bind_method(D_METHOD("get_recipe"), &KimodoMotion::get_recipe);
+	ClassDB::bind_method(D_METHOD("set_recipe", "recipe"), &KimodoMotion::set_recipe);
 
 	ClassDB::bind_method(D_METHOD("get_local_rotation", "frame", "joint"), &KimodoMotion::get_local_rotation);
 	ClassDB::bind_method(D_METHOD("get_root_position", "frame"), &KimodoMotion::get_root_position);
@@ -65,6 +67,10 @@ void KimodoMotion::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "root_positions_raw", PROPERTY_HINT_NONE, "",
 							  PROPERTY_USAGE_NO_EDITOR),
 				 "set_root_positions_raw", "get_root_positions_raw");
+	// Editable, unlike the two buffers. It is the half of a clip a person reads
+	// rather than plays, and correcting a mistyped prompt should not mean
+	// generating the motion again.
+	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "recipe"), "set_recipe", "get_recipe");
 }
 
 Error KimodoMotion::load_directory(const String &p_dir) {
@@ -114,7 +120,13 @@ Error KimodoMotion::load_files(const String &p_rotations_path, const String &p_r
 void KimodoMotion::clear() {
 	local_rotations.clear();
 	root_positions.clear();
+	recipe.clear();
 	frame_count = 0;
+	emit_changed();
+}
+
+void KimodoMotion::set_recipe(const Dictionary &p_recipe) {
+	recipe = p_recipe;
 	emit_changed();
 }
 

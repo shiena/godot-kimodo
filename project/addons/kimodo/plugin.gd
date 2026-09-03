@@ -5,15 +5,23 @@ extends EditorPlugin
 ## GDExtension; the plugin itself only owns the panel.
 
 const KimodoDock := preload("res://addons/kimodo/dock.gd")
+const KimodoImporter := preload("res://addons/kimodo/import_plugin.gd")
 const Settings := preload("res://addons/kimodo/settings.gd")
 
 var _dock: Control
+var _importer: EditorImportPlugin
 
 
 func _enter_tree() -> void:
 	# Declared here rather than from the dock, so the settings are listed in
 	# Editor Settings whether or not anyone opens the panel.
 	Settings.register()
+
+	# Before the dock, because a .kimodo already in the project is imported as
+	# the plugin comes up. An extension nothing claims is a broken entry in the
+	# FileSystem dock until somebody reimports it by hand.
+	_importer = KimodoImporter.new()
+	add_import_plugin(_importer)
 
 	# The manager is handed over rather than looked up: get_undo_redo() is an
 	# EditorPlugin method, and the dock is the half of this that edits scenes.
@@ -30,6 +38,9 @@ func _on_scene_changed(_root: Node) -> void:
 
 
 func _exit_tree() -> void:
+	if _importer != null:
+		remove_import_plugin(_importer)
+		_importer = null
 	if not is_instance_valid(_dock):
 		return
 	remove_control_from_docks(_dock)
