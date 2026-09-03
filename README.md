@@ -118,9 +118,10 @@ with the wrong model in the picker still loads as what it actually is.
    each file as it arrives. On SMPL-X it ends by reporting the motion GGUF as
    missing, which is expected: convert it as
    [The motion model](#the-motion-model) describes.
-3. Under **Generate**, set the length in frames and enter a prompt.
-4. Click **Generate**. The clip appears in **Motion** when the run finishes, and
-   **Preview** plays it on a built-in mannequin.
+3. Open the **Generate Motion** panel along the bottom of the editor, set the
+   length in frames and enter a prompt.
+4. Click **Generate**. The clip appears under **Motion** in the dock when the
+   run finishes, and **Preview** plays it on a built-in mannequin.
 5. Open a scene containing the rig you want to animate. **Target** finds its
    `Skeleton3D` and reports how many of the joints it could map.
 6. Name the clip under **Save**, then click **Bake** to put it on an
@@ -128,11 +129,123 @@ with the wrong model in the picker still loads as what it actually is.
    instead, and **Save motion** keeps the take itself so it can be baked onto
    another rig later.
 
+## The Generate panel
+
+A bottom panel rather than part of the dock, because a sequence of prompts is
+a row of lengths that only mean anything next to each other, and a dock is a
+column two hundred pixels wide. Open it from the **Generate Motion** button
+along the bottom of the editor.
+
+The strip across the top is the clip as it will be generated: one block per
+prompt, as wide as the frames it runs for, over a ruler in seconds. The
+hatched head of a block is the overlap the model is given to join it onto the
+one before. Clicking a block selects that prompt.
+
+Under it, one row per prompt: how long it runs, what it says, and a button to
+drop it. Then the sampling settings, then the button.
+
+**The prompt** is followed much more closely when it takes the shape the
+training captions took. NVIDIA's own
+[best practices](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/limitations.html)
+give the rules:
+
+- **Start with the subject.** `A person...`, `An old person...`, `A zombie...`.
+- **One behaviour, or two.** More than that blurs what the motion is meant to be.
+- **Aim for the middle.** `A person walks.` is too short to steer anything. A
+  list of what each limb does is too far the other way.
+- **Stay inside what it was trained on.** That is locomotion, gestures,
+  everyday activities, common object interactions, videogame combat, and
+  dancing. The styles are tired, angry, happy, sad, scared, drunk, injured,
+  stealthy, old, and childlike. `A baseball player walks up to the plate and
+  swings a bat` fails because nothing in the data is baseball.
+- **Neutral, physical terms.** The model card asks for
+  `A person walks slowly with shuffled steps` rather than a description of who
+  the person is.
+- **In a sequence, each prompt stands on its own.** `Then the person stops`
+  gives the model no subject and no starting point. `A person comes to a stop`
+  does.
+
+So this:
+
+```
+A person runs forward and then leaps over an obstacle in front of them.
+```
+
+rather than `running`. A single word steers almost nothing. What fills the gap
+is the training set itself: 700 hours of professional and stunt capture, with
+combat among its categories. A run generated from one word can end in a
+two-handed weapon carry and a turn to check behind. That is a staple of a game
+animation library, and nothing in the prompt asked for it.
+
+No prop is drawn. SMPL-X is 22 body joints with no hands, so what the clip
+holds is an arm and torso configuration. Nothing in the data is a weapon; the
+shape of the arms is what suggests one.
+
+**The length** of each prompt is in frames at 30 fps. Three limits apply and
+only the last of them is about quality:
+
+| Bound by | Frames | |
+|---|---|---|
+| the field | 2 to 600, and at least 16 for a single prompt | what the panel accepts |
+| kimodo.cpp | 1 to 10,000 alone, 2 to 300 in a sequence | what the generator accepts |
+| the model | **300** | 10 seconds, the longest it was trained on |
+
+Past 300 the model has nothing left to draw on, and the tail of the clip
+wanders. That looks the same as a prompt that ran out of things to say. Keep
+the length near what the sentence describes.
+
+**Steps** is how many denoising passes the sampler makes. More of them means a
+more converged sample and closer adherence to the text. The cost in time is
+close to linear. The default is 150 and the field goes to 200; kimodo.cpp's own
+demo asks for 100. Down in the tens is where a prompt stops being followed at
+all.
+
+**Seed** picks which sample you get. One prompt, length, step count, and seed
+give the same clip every time. Change the seed to ask for another take of the
+same instruction rather than a different instruction. It is stored nowhere and
+starts at 0 each session, because it belongs to a single invocation.
+
+**Guidance** is the classifier-free guidance weight on the text, the same
+knob a diffusion image model calls by that name. Upstream samples at 2, and
+so does this. Higher takes the words more literally and tends to move less;
+lower wanders away from them. At 0 the prompt is ignored entirely.
+
+**+ Add prompt** adds a row, up to 16 of them, and carries the clip on into
+that prompt:
+`A person walks forward.`, then `A person sits down.`, then `A person waves.`,
+as one continuous take. The joins are not crossfades between separate clips.
+The model receives the end of the previous stretch as a constraint on the root,
+every joint position, and the ankle and wrist orientations. It generates the
+next stretch from there, so the pose carries over and the character keeps the
+distance it travelled.
+
+**Transition** is how many frames of overlap it gets. Those frames are absorbed
+rather than added, so a clip is always as long as its prompts add up to. The
+transition has to be shorter than every prompt after the first.
+
+**Continuity** is the second guidance weight, the one on that constraint. It
+decides how hard each prompt after the first is pulled onto the end of the
+one before it. It appears alongside Transition, and for the same reason: the
+first stretch is sampled with nothing to join onto, so a single prompt has
+nothing for the weight to act on and ignores it.
+
+A sequence costs what its prompts cost. The 8B text encoder runs once per
+prompt, and the denoiser once per stretch.
+
+Generation runs as a separate process. The text encoder is an 8B LLM2Vec model.
+Sharing the editor's Vulkan device with it would mean competing for VRAM, and
+losing the editor to a failed run.
+
+Both guidance weights reach the generator through its environment rather than
+its command line, along with everything else under
+[Runtime environment](#runtime-environment).
+
 ## The dock
 
-One column, read top to bottom: **Setup**, **Generate**, **Motion**,
-**Target**, **Save**, **Preview**. Each section reports on a line of its own, so
-an answer appears beside the button that produced it.
+One column, read top to bottom: **Setup**, **Motion**, **Target**, **Save**,
+**Preview**. Everything either side of a run; the run itself is
+[the bottom panel](#the-generate-panel). Each section reports on a line of its
+own, so an answer appears beside the button that produced it.
 
 ### Setup
 
@@ -205,105 +318,6 @@ the count to the machine.
 so this reorders the list rather than choosing from it: 2 hides the others, and
 what was device 2 becomes the only device there is. At 0 nothing is set, and
 every device stays visible in its own order.
-
-### Generate
-
-Length in frames, denoising steps, and a seed; then the prompt; then the button.
-
-**The prompt** is followed much more closely when it takes the shape the
-training captions took. NVIDIA's own
-[best practices](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/limitations.html)
-give the rules:
-
-- **Start with the subject.** `A person...`, `An old person...`, `A zombie...`.
-- **One behaviour, or two.** More than that blurs what the motion is meant to be.
-- **Aim for the middle.** `A person walks.` is too short to steer anything. A
-  list of what each limb does is too far the other way.
-- **Stay inside what it was trained on.** That is locomotion, gestures,
-  everyday activities, common object interactions, videogame combat, and
-  dancing. The styles are tired, angry, happy, sad, scared, drunk, injured,
-  stealthy, old, and childlike. `A baseball player walks up to the plate and
-  swings a bat` fails because nothing in the data is baseball.
-- **Neutral, physical terms.** The model card asks for
-  `A person walks slowly with shuffled steps` rather than a description of who
-  the person is.
-- **In a sequence, each prompt stands on its own.** `Then the person stops`
-  gives the model no subject and no starting point. `A person comes to a stop`
-  does.
-
-So this:
-
-```
-A person runs forward and then leaps over an obstacle in front of them.
-```
-
-rather than `running`. A single word steers almost nothing. What fills the gap
-is the training set itself: 700 hours of professional and stunt capture, with
-combat among its categories. A run generated from one word can end in a
-two-handed weapon carry and a turn to check behind. That is a staple of a game
-animation library, and nothing in the prompt asked for it.
-
-No prop is drawn. SMPL-X is 22 body joints with no hands, so what the clip
-holds is an arm and torso configuration. Nothing in the data is a weapon; the
-shape of the arms is what suggests one.
-
-**Frames** is the length at 30 fps. Three limits apply and only the last of
-them is about quality:
-
-| Bound by | Frames | |
-|---|---|---|
-| the field | 16 to 600 | what the dock accepts |
-| kimodo.cpp | 1 to 10,000 alone, 2 to 300 in a sequence | what the generator accepts |
-| the model | **300** | 10 seconds, the longest it was trained on |
-
-Past 300 the model has nothing left to draw on, and the tail of the clip
-wanders. That looks the same as a prompt that ran out of things to say. Keep
-the length near what the sentence describes.
-
-**Steps** is how many denoising passes the sampler makes. More of them means a
-more converged sample and closer adherence to the text. The cost in time is
-close to linear. The default is 150 and the field goes to 200; kimodo.cpp's own
-demo asks for 100. Down in the tens is where a prompt stops being followed at
-all.
-
-**Seed** picks which sample you get. One prompt, length, step count, and seed
-give the same clip every time. Change the seed to ask for another take of the
-same instruction rather than a different instruction. It is stored nowhere and
-starts at 0 each session, because it belongs to a single invocation.
-
-**Guidance** is the classifier-free guidance weight on the text, the same
-knob a diffusion image model calls by that name. Upstream samples at 2, and
-so does this. Higher takes the words more literally and tends to move less;
-lower wanders away from them. At 0 the prompt is ignored entirely.
-
-**+ Add prompt** carries the clip on into another prompt, up to 16 of them:
-`A person walks forward.`, then `A person sits down.`, then `A person waves.`,
-as one continuous take. The joins are not crossfades between separate clips.
-The model receives the end of the previous stretch as a constraint on the root,
-every joint position, and the ankle and wrist orientations. It generates the
-next stretch from there, so the pose carries over and the character keeps the
-distance it travelled.
-
-**Transition** is how many frames of overlap it gets. Those frames are absorbed
-rather than added, so a clip is always as long as its prompts add up to. The
-transition has to be shorter than every prompt after the first.
-
-**Continuity** is the second guidance weight, the one on that constraint. It
-decides how hard each prompt after the first is pulled onto the end of the
-one before it. It appears alongside Transition, and for the same reason: the
-first stretch is sampled with nothing to join onto, so a single prompt has
-nothing for the weight to act on and ignores it.
-
-A sequence costs what its prompts cost. The 8B text encoder runs once per
-prompt, and the denoiser once per stretch.
-
-Generation runs as a separate process. The text encoder is an 8B LLM2Vec model.
-Sharing the editor's Vulkan device with it would mean competing for VRAM, and
-losing the editor to a failed run.
-
-Both guidance weights reach the generator through its environment rather than
-its command line, along with everything else under
-[Runtime environment](#runtime-environment).
 
 ### Motion
 

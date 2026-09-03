@@ -251,6 +251,34 @@ static func bone_map_path(key: String = "") -> String:
 	return sample if FileAccess.file_exists(sample) else ""
 
 
+## The files llm_text_encoder::load() insists on, so that "present" means
+## kmd-generate will accept the bundle rather than only that a directory turned
+## up. Checking the directory alone let a download that stopped halfway read as
+## complete.
+##
+## Here rather than in the dock because the Generate panel has to ask the same
+## question before it starts a run, and the dock has to ask it to draw the
+## Setup pane.
+static func missing_weights() -> PackedStringArray:
+	var missing := PackedStringArray()
+	if not FileAccess.file_exists(motion_gguf_path()):
+		missing.append(motion_relative().get_file())
+
+	var bundle := text_bundle_path()
+	for name in ["tokenizer.gguf", "embedding.gguf", "final-norm.gguf"]:
+		if not FileAccess.file_exists(bundle.path_join(name)):
+			missing.append(name)
+	for layer in 32:
+		var name := "layer-%02d.gguf" % layer
+		if not FileAccess.file_exists(bundle.path_join(name)):
+			missing.append(name)
+	return missing
+
+
+static func weights_present() -> bool:
+	return missing_weights().is_empty()
+
+
 ## Everything the child process reads from its environment. OS.create_process()
 ## cannot pass an environment, so the caller sets these on the editor process
 ## and lets the child inherit them. An empty value means unset.

@@ -1,17 +1,15 @@
 @tool
 extends ScrollContainer
 
-## The Kimodo dock: prompt in, Animation on a rig out.
+## The Kimodo dock: a clip in, an Animation on a rig out.
 ##
-## Generation runs kmd-generate as a separate process rather than through the
-## GDExtension. The text encoder is an 8B LLM2Vec, and sharing the editor's
-## Vulkan device with it means competing for VRAM and taking the editor down
-## with a failed generation. _spawn_generator() is the only place that knows
-## how generation is invoked, so linking kimodo.cpp directly later is a change
-## confined to that one function.
+## The run itself is not here. Generate is a bottom panel, because a sequence
+## of prompts is a row of lengths that only mean anything next to each other,
+## and a dock has no width to show that in. What is left is everything either
+## side of a run: the weights it needs, the rig it lands on, the preview, and
+## where the result goes.
 ##
-## kmd-generate owns the GPU for the length of a run, so only one is allowed at
-## a time.
+## load_generated() is how the panel hands a finished run over.
 ##
 ## Setup folds away, because after the first run nobody touches the weights or
 ## the runtime knobs. It carries an arrow so it reads as a pane rather than a
@@ -26,6 +24,7 @@ const Settings := preload("res://addons/kimodo/settings.gd")
 const Downloader := preload("res://addons/kimodo/downloader.gd")
 const Checkpoint := preload("res://addons/kimodo/checkpoint.gd")
 const ClipFile := preload("res://addons/kimodo/clip_file.gd")
+const UI := preload("res://addons/kimodo/ui.gd")
 ## Why a download that fetched everything on offer can still leave one file
 ## missing. LocalAI-io withdrew the converted SMPL-X weights after reading the
 ## upstream NVIDIA licence, which forbids distributing a derivative model, so
@@ -58,20 +57,6 @@ var _convert_button: Button
 var _page_button: Button
 var _convert_row: HBoxContainer
 var _checkpoint: Node
-
-var _prompt: TextEdit
-## One row per prompt after the first. Empty for an ordinary single-prompt run.
-var _segments: VBoxContainer
-var _add_segment: Button
-var _transition_row: HBoxContainer
-var _transition: SpinBox
-var _frames: SpinBox
-var _steps: SpinBox
-var _seed: SpinBox
-var _text_cfg: SpinBox
-var _constraint_cfg: SpinBox
-var _generate_button: Button
-var _status: Label
 
 var _clips: OptionButton
 var _clip_dirs := PackedStringArray()
@@ -124,8 +109,6 @@ var _sysmem: CheckBox
 var _motion: KimodoMotion
 var _loaded_clip := ""
 var _bone_map: BoneMap
-var _pid := -1
-var _pending_output := ""
 var _dialog: FileDialog
 var _confirm: ConfirmationDialog
 var _downloader: Node
@@ -172,7 +155,6 @@ func _ready() -> void:
 	_refresh_buttons()
 	_build_runtime()
 
-	_build_generate()
 	_build_motion()
 	_build_target()
 	_build_save()
@@ -191,63 +173,8 @@ func _ready() -> void:
 	_on_bone_map_changed(_bone_map_path.text)
 	_refresh_presence()
 	_refresh_clips()
-	_on_setup_toggled(not _weights_present())
+	_on_setup_toggled(not Settings.weights_present())
 	set_process(true)
-
-
-func _build_generate() -> void:
-	_section(_body, "Generate")
-	# The numbers are set once and left alone, so they go above the prompt
-	# rather than between it and the button that acts on it. Two to a row
-	# rather than four: a dock is narrow, and a SpinBox at a quarter of one has
-	# no room left for the number once its two arrows have theirs.
-	var numbers := HBoxContainer.new()
-	_body.add_child(numbers)
-	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.get_value("generation/frames")))
-	_frames.value_changed.connect(func(value): Settings.set_value("generation/frames", int(value)))
-	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.get_value("generation/steps")))
-	_steps.value_changed.connect(func(value): Settings.set_value("generation/steps", int(value)))
-
-	var sampling := HBoxContainer.new()
-	_body.add_child(sampling)
-	_seed = _spin(sampling, "Seed", 0, 1 << 30, 0)
-	_text_cfg = _spin(sampling, "Guidance", 0.0, 15.0,
-			float(Settings.get_value("generation/text_cfg")),
-			"How hard the sampler is pushed towards the prompt. Upstream samples at 2. Higher takes the words more literally and tends to move less; lower wanders.",
-			0.1)
-	_text_cfg.value_changed.connect(func(value): Settings.set_value("generation/text_cfg", value))
-
-	_prompt = TextEdit.new()
-	_prompt.placeholder_text = "A person walks forward and waves their arms."
-	_prompt.custom_minimum_size = Vector2(0.0, 64.0)
-	_prompt.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	_body.add_child(_prompt)
-
-	# Further prompts appear between the first one and the button that adds
-	# them, so the column reads in the order the clip will play.
-	_segments = VBoxContainer.new()
-	_body.add_child(_segments)
-
-	_add_segment = _button(_body, "+ Add prompt", _on_add_segment,
-			"Continue the clip with another prompt. The model is given the end of the previous stretch as a constraint, so the body carries over rather than restarting.")
-
-	# Both of these describe the join between one prompt and the next, so the
-	# row they share is the row that appears once there is a second prompt.
-	_transition_row = HBoxContainer.new()
-	_body.add_child(_transition_row)
-	_transition = _spin(_transition_row, "Transition", 1, 60,
-			int(Settings.get_value("generation/transition")),
-			"Frames of overlap the model is given to join one prompt to the next. Absorbed rather than added, and it has to be shorter than every prompt after the first.")
-	_transition.value_changed.connect(func(value): Settings.set_value("generation/transition", int(value)))
-	_constraint_cfg = _spin(_transition_row, "Continuity", 0.0, 15.0,
-			float(Settings.get_value("generation/constraint_cfg")),
-			"How hard each prompt after the first is pulled onto the end of the one before it. Upstream samples at 2. A single prompt has nothing to join onto and ignores it, which is why it sits here rather than beside Guidance.",
-			0.1)
-	_constraint_cfg.value_changed.connect(func(value): Settings.set_value("generation/constraint_cfg", value))
-	_refresh_segments()
-
-	_generate_button = _button(_body, "Generate", _on_generate)
-	_status = _message(_body, 3)
 
 
 func _build_motion() -> void:
@@ -515,24 +442,14 @@ func _on_backend_selected(index: int) -> void:
 # --- widget helpers ----------------------------------------------------------
 
 
+## The four below are ui.gd's, kept under their old names so the fifty call
+## sites in this file read as they did when the dock owned them.
 func _section(parent: Control, title: String) -> void:
-	parent.add_child(HSeparator.new())
-	var label := Label.new()
-	label.text = title
-	label.add_theme_color_override(&"font_color", Color(0.6, 0.75, 1.0))
-	parent.add_child(label)
+	UI.section(parent, title)
 
 
-## Deliberately no clip_text. Setting it drops the text from the button's
-## minimum size, so a button that does not expand shrinks to its padding and
-## loses its label entirely. Short labels are what keeps the dock narrow.
 func _button(parent: Control, text: String, action: Callable, tooltip: String = "") -> Button:
-	var button := Button.new()
-	button.text = text
-	button.tooltip_text = tooltip
-	button.pressed.connect(action)
-	parent.add_child(button)
-	return button
+	return UI.button(parent, text, action, tooltip)
 
 
 func _browse(action: Callable) -> Button:
@@ -542,15 +459,8 @@ func _browse(action: Callable) -> Button:
 	return button
 
 
-## A status line. It wraps, and it is capped so that one long path cannot push
-## everything below it off the dock.
 func _message(parent: Control, lines: int) -> Label:
-	var label := Label.new()
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.max_lines_visible = lines
-	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	parent.add_child(label)
-	return label
+	return UI.message(parent, lines)
 
 
 ## A sentence that wraps, in a panel tinted the editor's warning colour.
@@ -629,26 +539,9 @@ func _path_changed(key: String) -> void:
 		_path_hooks[key].call()
 
 
-## Floats rather than ints, so the guidance weights can share it with the
-## frame counts. Callers that want whole numbers leave the step at 1 and read
-## the value back through int().
 func _spin(parent: Control, label_text: String, low: float, high: float, value: float,
 		tooltip: String = "", step: float = 1.0) -> SpinBox:
-	var box := VBoxContainer.new()
-	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(box)
-	var label := Label.new()
-	label.text = label_text
-	label.tooltip_text = tooltip
-	box.add_child(label)
-	var spin := SpinBox.new()
-	spin.min_value = low
-	spin.max_value = high
-	spin.step = step
-	spin.value = value
-	spin.tooltip_text = tooltip
-	box.add_child(spin)
-	return spin
+	return UI.spin(parent, label_text, low, high, value, tooltip, step)
 
 
 func _pick_into(target: LineEdit, file_mode: bool, filter: String = "*", key: String = "") -> void:
@@ -676,30 +569,6 @@ func _accept_pick(target: LineEdit, key: String, path: String) -> void:
 
 
 # --- weights -----------------------------------------------------------------
-
-
-## The files llm_text_encoder::load() insists on, so that "present" means
-## kmd-generate will accept the bundle rather than only that a directory turned
-## up. Checking the directory alone let a download that stopped halfway read as
-## complete.
-func _missing_weights() -> PackedStringArray:
-	var missing := PackedStringArray()
-	if not FileAccess.file_exists(Settings.motion_gguf_path()):
-		missing.append(Settings.motion_relative().get_file())
-
-	var bundle := Settings.text_bundle_path()
-	for name in ["tokenizer.gguf", "embedding.gguf", "final-norm.gguf"]:
-		if not FileAccess.file_exists(bundle.path_join(name)):
-			missing.append(name)
-	for layer in 32:
-		var name := "layer-%02d.gguf" % layer
-		if not FileAccess.file_exists(bundle.path_join(name)):
-			missing.append(name)
-	return missing
-
-
-func _weights_present() -> bool:
-	return _missing_weights().is_empty()
 
 
 ## Which skeleton the dock is reading. A loaded clip settles it, because it was
@@ -785,7 +654,7 @@ func _on_skeleton_selected(p_index: int) -> void:
 
 func _refresh_presence() -> void:
 	var generator := Settings.generator_path()
-	var missing := _missing_weights()
+	var missing := Settings.missing_weights()
 
 	var lines := PackedStringArray()
 	lines.append(_presence_line("kmd-generate", not generator.is_empty()))
@@ -829,7 +698,7 @@ func _on_download() -> void:
 		return
 	# A resume needs no ceremony. Asking is for the case where there is nothing
 	# obvious to gain, so the question has to say what pressing it actually costs.
-	if _weights_present():
+	if Settings.weights_present():
 		_ask_before_redownload()
 		return
 	_start_download()
@@ -890,235 +759,21 @@ func _on_download_finished(ok: bool, message: String) -> void:
 	# is the expected end of a download rather than a fault in it. Saying only
 	# that a manifest was unreadable would send someone looking for a broken
 	# network or a wrong repository name, and there is neither to find.
-	var missing := _missing_weights()
+	var missing := Settings.missing_weights()
 	if missing.size() == 1 and _motion_is_unobtainable(missing):
 		message = MOTION_UNPUBLISHED % ProjectSettings.globalize_path(Settings.motion_gguf_path())
 	_set_message(_download_status, message)
 	_refresh_presence()
 
 
-## Capped labels drop the tail, so the whole message stays reachable as a
-## tooltip.
 func _set_message(label: Label, text: String) -> void:
-	label.text = text
-	label.tooltip_text = text
+	UI.set_message(label, text)
 
 
-# --- generation --------------------------------------------------------------
-
-
-## A prompt after the first: how long it runs, and what it says. The generator
-## takes at most sixteen in one sequence, the first of which is the field above.
-func _on_add_segment() -> void:
-	if _segments.get_child_count() >= 15:
-		_set_message(_status, "A sequence takes at most 16 prompts.")
-		return
-	var row := HBoxContainer.new()
-	_segments.add_child(row)
-
-	var frames := SpinBox.new()
-	frames.min_value = 2
-	frames.max_value = 300
-	frames.value = mini(int(_frames.value), 300)
-	frames.tooltip_text = "Frames this prompt runs for. A prompt inside a sequence is limited to 300."
-	row.add_child(frames)
-
-	var prompt := LineEdit.new()
-	prompt.placeholder_text = "A person sits down."
-	prompt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(prompt)
-
-	_button(row, "×", _on_drop_segment.bind(row), "Remove this prompt.")
-	_refresh_segments()
-	prompt.grab_focus()
-
-
-func _on_drop_segment(row: Control) -> void:
-	_segments.remove_child(row)
-	row.queue_free()
-	_refresh_segments()
-
-
-## Transition and Continuity are both answers to a question only a second
-## prompt asks.
-func _refresh_segments() -> void:
-	_transition_row.visible = _segments.get_child_count() > 0
-
-
-func _write_text(path: String, text: String) -> bool:
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
-		_set_message(_status, "Cannot write %s." % path)
-		return false
-	file.store_string(text)
-	file.close()
-	return true
-
-
-func _on_generate() -> void:
-	if _pid >= 0:
-		return
-	if Settings.generator_path().is_empty():
-		_set_message(_status, "No kmd-generate in the addon. Build it with scons.")
-		return
-	if not _weights_present():
-		_set_message(_status, "The weights are incomplete. Download them under Weights below.")
-		return
-	# The first prompt is the field; the rest are the rows beneath it.
-	var prompts := PackedStringArray([_prompt.text.strip_edges()])
-	var lengths := PackedInt32Array([int(_frames.value)])
-	for row in _segments.get_children():
-		lengths.append(int((row.get_child(0) as SpinBox).value))
-		prompts.append((row.get_child(1) as LineEdit).text.strip_edges())
-	for index in prompts.size():
-		if prompts[index].is_empty():
-			_set_message(_status, "Prompt %d is empty." % (index + 1))
-			return
-
-	var transition := int(_transition.value)
-	var total := 0
-	for length in lengths:
-		total += length
-	# Checked here rather than left to an exit code, because the generator's
-	# limits on a sequence are tighter than on a single prompt.
-	if prompts.size() > 1:
-		for index in lengths.size():
-			if lengths[index] > 300:
-				_set_message(_status, "Prompt %d asks for %d frames. Inside a sequence the limit is 300." % [
-						index + 1, lengths[index]])
-				return
-		for index in range(1, lengths.size()):
-			if transition >= lengths[index]:
-				_set_message(_status, "The transition is %d frames and prompt %d is only %d. It has to be shorter than every prompt after the first." % [
-						transition, index + 1, lengths[index]])
-				return
-
-	var stamp := str(Time.get_unix_time_from_system()).replace(".", "")
-	var out_dir: String = Settings.output_dir().path_join("gen_%s" % stamp)
-	DirAccess.make_dir_recursive_absolute(out_dir)
-
-	# prompt.txt is what the clip list reads for its label, so it carries the
-	# whole sequence on one line whatever the shape of the run.
-	if not _write_text(out_dir.path_join("prompt.txt"), " -> ".join(prompts)):
-		return
-	# Written before the generator starts rather than after it finishes, so a
-	# run that crashes still leaves behind what was asked of it.
-	if not _write_text(out_dir.path_join("recipe.json"),
-			JSON.stringify(_recipe(prompts, lengths, transition), "\t")):
-		return
-	var paths := PackedStringArray()
-	for index in prompts.size():
-		if prompts.size() == 1:
-			paths.append(out_dir.path_join("prompt.txt"))
-			break
-		var path := out_dir.path_join("prompt_%d.txt" % index)
-		if not _write_text(path, prompts[index]):
-			return
-		paths.append(path)
-
-	_pid = _spawn_generator(_generator_arguments(prompts, lengths, paths, transition, out_dir))
-	if _pid < 0:
-		_set_message(_status, "Could not start %s." % Settings.generator_path())
-		return
-	_pending_output = out_dir
-	_generate_button.disabled = true
-	_set_message(_status, "Generating %d frames from %d prompt%s into %s ..." % [
-			total, prompts.size(), "" if prompts.size() == 1 else "s", out_dir])
-
-
-## What the run was, in the form a clip carries. Everything here is known before
-## the generator starts, so nothing has to be read back out of its output.
-##
-## The revision is the setting rather than a commit resolved against Hugging
-## Face: it is what the download asked for, and asking again at generation time
-## would put a network call in front of the GPU.
-func _recipe(prompts: PackedStringArray, lengths: PackedInt32Array, transition: int) -> Dictionary:
-	var key := Settings.skeleton()
-	var recipe := {
-		"prompts": Array(prompts),
-		"lengths": Array(lengths),
-		# A single prompt has nothing to transition to, and recording the spin
-		# box anyway would make two clips differ over a number neither used.
-		"transition": transition if prompts.size() > 1 else 0,
-		"steps": int(_steps.value),
-		"seed": int(_seed.value),
-		"text_cfg": _text_cfg.value,
-		# Recorded whatever the shape of the run: a recipe says what the
-		# generator was given, not what it turned out to have a use for.
-		"constraint_cfg": _constraint_cfg.value,
-		"skeleton": key,
-		"motion_repo": Settings.motion_repo(key),
-		"text_repo": String(Settings.get_value("weights/text_repo")),
-		"revision": String(Settings.get_value("weights/revision")),
-	}
-	# A converted SMPL-X GGUF was never downloaded, so no repository revision
-	# names those bytes. The checkpoint it came from is what does, and
-	# checkpoint.gd wrote it down at conversion time for exactly this.
-	var pinned := Checkpoint.checkpoint_dir(
-			String(Settings.get_value("paths/models_dir"))).path_join("REVISION")
-	if key == "smplx22" and FileAccess.file_exists(pinned):
-		recipe["checkpoint"] = FileAccess.get_file_as_string(pinned).strip_edges()
-	return ClipFile.stamp(recipe)
-
-
-## The generator reads two shapes off one command line and tells them apart by
-## what sits in argv[3]: a prompt file for a single run, the word --sequence for
-## several. A sequence adds no frames of its own; the transition is absorbed
-## into the prompts either side of it.
-func _generator_arguments(prompts: PackedStringArray, lengths: PackedInt32Array,
-		paths: PackedStringArray, transition: int, out_dir: String) -> PackedStringArray:
-	var arguments := PackedStringArray([
-		ProjectSettings.globalize_path(Settings.motion_gguf_path()),
-		ProjectSettings.globalize_path(Settings.text_bundle_path()),
-	])
-	if prompts.size() == 1:
-		arguments.append(ProjectSettings.globalize_path(paths[0]))
-		arguments.append(str(lengths[0]))
-	else:
-		arguments.append("--sequence")
-		arguments.append(str(transition))
-	arguments.append(str(int(_steps.value)))
-	arguments.append(str(int(_seed.value)))
-	arguments.append(ProjectSettings.globalize_path(out_dir))
-	if prompts.size() > 1:
-		for index in prompts.size():
-			arguments.append(str(lengths[index]))
-			arguments.append(ProjectSettings.globalize_path(paths[index]))
-	return arguments
-
-
-## The one place that knows how a motion gets generated.
-func _spawn_generator(arguments: PackedStringArray) -> int:
-	# OS.create_process() takes no environment, and every knob the child reads is
-	# an environment variable, so they go on the editor process to be inherited.
-	var environment := Settings.runtime_environment()
-	for variable in environment:
-		var value: String = environment[variable]
-		if value.is_empty():
-			OS.unset_environment(variable)
-		else:
-			OS.set_environment(variable, value)
-
-	return OS.create_process(ProjectSettings.globalize_path(Settings.generator_path()), arguments, false)
-
-
+## The preview is the only thing here that moves on its own. Waiting on the
+## generator left with the panel that starts it.
 func _process(delta: float) -> void:
 	_advance_preview(delta)
-	if _pid < 0 or OS.is_process_running(_pid):
-		return
-
-	var exit_code := OS.get_process_exit_code(_pid)
-	_pid = -1
-	_generate_button.disabled = false
-
-	if exit_code != 0:
-		_set_message(_status, "kmd-generate exited with %d. See its console output." % exit_code)
-	elif _load_motion(_pending_output):
-		_refresh_clips()
-		_clips.select(_clip_dirs.find(_pending_output))
-		_set_message(_status, "Done.")
-	else:
-		_set_message(_status, "%s produced no readable motion. See the console." % _pending_output)
 
 
 # --- motion ------------------------------------------------------------------
@@ -1304,6 +959,17 @@ func _on_open_clip_folder() -> void:
 	var absolute := ProjectSettings.globalize_path(target)
 	if OS.shell_show_in_file_manager(absolute, true) != OK:
 		_set_message(_motion_label, "Could not open %s." % absolute)
+
+
+## What the Generate panel hands over when a run finishes. Loading it is the
+## dock's half of the job, because the dock is what owns the clip list and the
+## preview that has to start showing it.
+func load_generated(dir: String) -> void:
+	if not _load_motion(dir):
+		_set_message(_motion_label, "%s produced no readable motion. See the console." % dir)
+		return
+	_refresh_clips()
+	_clips.select(_clip_dirs.find(dir))
 
 
 func _load_motion(dir: String) -> bool:
