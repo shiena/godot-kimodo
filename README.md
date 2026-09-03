@@ -271,6 +271,11 @@ give the same clip every time. Change the seed to ask for another take of the
 same instruction rather than a different instruction. It is stored nowhere and
 starts at 0 each session, because it belongs to a single invocation.
 
+**Guidance** is the classifier-free guidance weight on the text, the same
+knob a diffusion image model calls by that name. Upstream samples at 2, and
+so does this. Higher takes the words more literally and tends to move less;
+lower wanders away from them. At 0 the prompt is ignored entirely.
+
 **+ Add prompt** carries the clip on into another prompt, up to 16 of them:
 `A person walks forward.`, then `A person sits down.`, then `A person waves.`,
 as one continuous take. The joins are not crossfades between separate clips.
@@ -283,6 +288,12 @@ distance it travelled.
 rather than added, so a clip is always as long as its prompts add up to. The
 transition has to be shorter than every prompt after the first.
 
+**Continuity** is the second guidance weight, the one on that constraint. It
+decides how hard each prompt after the first is pulled onto the end of the
+one before it. It appears alongside Transition, and for the same reason: the
+first stretch is sampled with nothing to join onto, so a single prompt has
+nothing for the weight to act on and ignores it.
+
 A sequence costs what its prompts cost. The 8B text encoder runs once per
 prompt, and the denoiser once per stretch.
 
@@ -290,8 +301,9 @@ Generation runs as a separate process. The text encoder is an 8B LLM2Vec model.
 Sharing the editor's Vulkan device with it would mean competing for VRAM, and
 losing the editor to a failed run.
 
-The classifier-free guidance weights are whatever the generator was compiled
-with, currently 2.0 each. Nothing on its command line sets them.
+Both guidance weights reach the generator through its environment rather than
+its command line, along with everything else under
+[Runtime environment](#runtime-environment).
 
 ### Motion
 
@@ -403,7 +415,7 @@ A `.kimodo` file is those two buffers with the recipe in front of them:
 | Field | |
 |---|---|
 | `prompts`, `lengths`, `transition` | the sequence as it was typed |
-| `steps`, `seed` | what the sampler was given |
+| `steps`, `seed`, `text_cfg`, `constraint_cfg` | what the sampler was given |
 | `skeleton`, `motion_repo`, `text_repo`, `revision` | which weights ran |
 | `checkpoint` | for a converted SMPL-X, the checkpoint revision the GGUF came from |
 | `hash` | sha256 of all of the above; two runs of one recipe hash alike |
@@ -451,8 +463,9 @@ The prompt and the seed are stored nowhere. They belong to one invocation.
 
 ### Runtime environment
 
-kimodo.cpp reads its configuration from the environment. Since a process cannot
-be given one directly here, the dock sets these on the editor and lets the
+kimodo.cpp reads its configuration from the environment, and kmd-generate
+reads its two guidance weights the same way. Since a process cannot be given
+an environment directly here, the dock sets these on the editor and lets the
 generator inherit them.
 
 | Setting | Variable | Effect |
@@ -460,6 +473,8 @@ generator inherit them.
 | Text layers per chunk | `KIMODO_TEXT_LAYER_CHUNK` | 1 to 32, default 8. Fewer layers lowers peak VRAM and costs speed |
 | Backend | `KIMODO_BACKEND` | Only the exact string `cpu` has an effect; anything else means "try Vulkan, fall back to the CPU" |
 | CPU threads | `KIMODO_THREADS` | Applies only on the CPU backend; 0 leaves it to the machine |
+| Guidance | `KIMODO_TEXT_CFG` | Classifier-free guidance on the text, default 2.0 |
+| Continuity | `KIMODO_CONSTRAINT_CFG` | Classifier-free guidance on the sequence constraint, default 2.0. A single prompt is sampled unconstrained and ignores it |
 | GPU index | `GGML_VK_VISIBLE_DEVICES` | kimodo.cpp always opens Vulkan device 0, so choosing a GPU means reordering which one that is |
 | Spill to system memory | `GGML_VK_ALLOW_SYSMEM_FALLBACK` | Lets a buffer land in host memory when device-local VRAM runs out. It then crosses PCIe on every access, buying completion rather than speed |
 
@@ -560,10 +575,17 @@ invisible local edits. Each is skipped when already applied.
 |---|---|
 | `0001-narrow-path-for-gguf_init_from_file.patch` | `std::filesystem::path::value_type` is `wchar_t` on Windows, so `path.c_str()` is not the narrow string `gguf_init_from_file` takes |
 | `0002-include-stdexcept.patch` | `std::runtime_error` used without `<stdexcept>`. libstdc++ pulls it in transitively; the MSVC STL does not |
+| `0003-guidance-weights-from-the-environment.patch` | kmd-generate passed a literal 2.0 for both guidance weights, so no caller could set either |
 
-Both belong upstream. `.gitmodules` marks kimodo.cpp `ignore = dirty` so the
-patched tree does not appear as a change on every `git status`, while the
-submodule still points at the pinned revision.
+The first two are build fixes and belong upstream. The third is not a fix: it
+makes a demo command line configurable, and it is a patch because the file is
+someone else's. It stays deliberately small for that reason, reading two
+environment variables rather than changing the argv shape both the demo and
+this dock depend on.
+
+`.gitmodules` marks kimodo.cpp `ignore = dirty` so the patched tree does not
+appear as a change on every `git status`, while the submodule still points at
+the pinned revision.
 
 ### Continuous integration
 

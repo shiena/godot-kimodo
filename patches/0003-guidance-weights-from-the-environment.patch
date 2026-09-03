@@ -1,0 +1,66 @@
+diff --git a/src/generate.cpp b/src/generate.cpp
+index 63ebd58..d77cedf 100644
+--- a/src/generate.cpp
++++ b/src/generate.cpp
+@@ -2,6 +2,7 @@
+ // public C++ model API, so the demo exercises the same text route as embedders.
+ #include <kimodo/kimodo.hpp>
+ 
++#include <cmath>
+ #include <cstdlib>
+ #include <filesystem>
+ #include <fstream>
+@@ -12,6 +13,26 @@
+ #include <vector>
+ 
+ namespace {
++// Classifier-free guidance weights.  Both default to the 2.0 upstream samples
++// with, and both are read from the environment rather than argv: the two
++// command-line shapes below are told apart by position, and kimodo.cpp already
++// takes KIMODO_BACKEND, KIMODO_THREADS and KIMODO_TEXT_LAYER_CHUNK this way.
++//
++// KIMODO_CONSTRAINT_CFG only reaches a sequence.  A single prompt is sampled
++// unconstrained, where the constraint branch of the separated CFG is handed the
++// same input as the unconditional one and their difference is zero.
++float guidance(const char *name) {
++    const char *value = std::getenv(name);
++    if (!value || !*value) return 2.F;
++    try {
++        const float weight = std::stof(value);
++        if (std::isfinite(weight)) return weight;
++    } catch (const std::exception &) {
++    }
++    std::cerr << name << "=" << value << " is not a number; using 2.0\n";
++    return 2.F;
++}
++
+ void write_f32(const std::filesystem::path &path, const std::vector<float> &values) {
+     std::ofstream out(path, std::ios::binary | std::ios::trunc);
+     if (!out) throw std::runtime_error("cannot open " + path.string());
+@@ -22,6 +43,8 @@ void write_f32(const std::filesystem::path &path, const std::vector<float> &valu
+ }
+ 
+ int main(int argc, char **argv) try {
++    const float text_cfg = guidance("KIMODO_TEXT_CFG");
++    const float constraint_cfg = guidance("KIMODO_CONSTRAINT_CFG");
+     if (argc >= 10 && std::string_view(argv[3]) == "--sequence") {
+         if ((argc - 8) % 2 != 0) throw std::runtime_error("sequence requires FRAME PROMPT.txt pairs");
+         const auto transition = static_cast<unsigned>(std::stoul(argv[4]));
+@@ -36,7 +59,7 @@ int main(int argc, char **argv) try {
+         }
+         auto model = kimodo::model::load(argv[1], argv[2]);
+         if (!model) throw std::runtime_error(model.error());
+-        auto motion = (*model)->generate_text_sequence(segments, transition, steps, seed, 2.F, 2.F);
++        auto motion = (*model)->generate_text_sequence(segments, transition, steps, seed, text_cfg, constraint_cfg);
+         if (!motion) throw std::runtime_error(motion.error());
+         const std::filesystem::path output(argv[7]); std::filesystem::create_directories(output);
+         write_f32(output / "root_positions.f32", motion->root_positions);
+@@ -57,7 +80,7 @@ int main(int argc, char **argv) try {
+     const auto seed = static_cast<std::uint64_t>(std::stoull(argv[6]));
+     auto model = kimodo::model::load(argv[1], argv[2]);
+     if (!model) throw std::runtime_error(model.error());
+-    auto motion = (*model)->generate_text(prompt, frames, steps, seed, 2.F, 2.F);
++    auto motion = (*model)->generate_text(prompt, frames, steps, seed, text_cfg, constraint_cfg);
+     if (!motion) throw std::runtime_error(motion.error());
+     const std::filesystem::path output(argv[7]);
+     std::filesystem::create_directories(output);

@@ -68,6 +68,8 @@ var _transition: SpinBox
 var _frames: SpinBox
 var _steps: SpinBox
 var _seed: SpinBox
+var _text_cfg: SpinBox
+var _constraint_cfg: SpinBox
 var _generate_button: Button
 var _status: Label
 
@@ -195,15 +197,25 @@ func _ready() -> void:
 
 func _build_generate() -> void:
 	_section(_body, "Generate")
-	# The three numbers are set once and left alone, so they go above the prompt
-	# rather than between it and the button that acts on it.
+	# The numbers are set once and left alone, so they go above the prompt
+	# rather than between it and the button that acts on it. Two to a row
+	# rather than four: a dock is narrow, and a SpinBox at a quarter of one has
+	# no room left for the number once its two arrows have theirs.
 	var numbers := HBoxContainer.new()
 	_body.add_child(numbers)
 	_frames = _spin(numbers, "Frames", 16, 600, int(Settings.get_value("generation/frames")))
 	_frames.value_changed.connect(func(value): Settings.set_value("generation/frames", int(value)))
 	_steps = _spin(numbers, "Steps", 1, 200, int(Settings.get_value("generation/steps")))
 	_steps.value_changed.connect(func(value): Settings.set_value("generation/steps", int(value)))
-	_seed = _spin(numbers, "Seed", 0, 1 << 30, 0)
+
+	var sampling := HBoxContainer.new()
+	_body.add_child(sampling)
+	_seed = _spin(sampling, "Seed", 0, 1 << 30, 0)
+	_text_cfg = _spin(sampling, "Guidance", 0.0, 15.0,
+			float(Settings.get_value("generation/text_cfg")),
+			"How hard the sampler is pushed towards the prompt. Upstream samples at 2. Higher takes the words more literally and tends to move less; lower wanders.",
+			0.1)
+	_text_cfg.value_changed.connect(func(value): Settings.set_value("generation/text_cfg", value))
 
 	_prompt = TextEdit.new()
 	_prompt.placeholder_text = "A person walks forward and waves their arms."
@@ -216,15 +228,22 @@ func _build_generate() -> void:
 	_segments = VBoxContainer.new()
 	_body.add_child(_segments)
 
+	_add_segment = _button(_body, "+ Add prompt", _on_add_segment,
+			"Continue the clip with another prompt. The model is given the end of the previous stretch as a constraint, so the body carries over rather than restarting.")
+
+	# Both of these describe the join between one prompt and the next, so the
+	# row they share is the row that appears once there is a second prompt.
 	_transition_row = HBoxContainer.new()
 	_body.add_child(_transition_row)
-	_add_segment = _button(_transition_row, "+ Add prompt", _on_add_segment,
-			"Continue the clip with another prompt. The model is given the end of the previous stretch as a constraint, so the body carries over rather than restarting.")
-	_add_segment.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_transition = _spin(_transition_row, "Transition", 1, 60,
 			int(Settings.get_value("generation/transition")),
 			"Frames of overlap the model is given to join one prompt to the next. Absorbed rather than added, and it has to be shorter than every prompt after the first.")
 	_transition.value_changed.connect(func(value): Settings.set_value("generation/transition", int(value)))
+	_constraint_cfg = _spin(_transition_row, "Continuity", 0.0, 15.0,
+			float(Settings.get_value("generation/constraint_cfg")),
+			"How hard each prompt after the first is pulled onto the end of the one before it. Upstream samples at 2. A single prompt has nothing to join onto and ignores it, which is why it sits here rather than beside Guidance.",
+			0.1)
+	_constraint_cfg.value_changed.connect(func(value): Settings.set_value("generation/constraint_cfg", value))
 	_refresh_segments()
 
 	_generate_button = _button(_body, "Generate", _on_generate)
@@ -610,8 +629,11 @@ func _path_changed(key: String) -> void:
 		_path_hooks[key].call()
 
 
-func _spin(parent: Control, label_text: String, low: int, high: int, value: int,
-		tooltip: String = "") -> SpinBox:
+## Floats rather than ints, so the guidance weights can share it with the
+## frame counts. Callers that want whole numbers leave the step at 1 and read
+## the value back through int().
+func _spin(parent: Control, label_text: String, low: float, high: float, value: float,
+		tooltip: String = "", step: float = 1.0) -> SpinBox:
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(box)
@@ -622,6 +644,7 @@ func _spin(parent: Control, label_text: String, low: int, high: int, value: int,
 	var spin := SpinBox.new()
 	spin.min_value = low
 	spin.max_value = high
+	spin.step = step
 	spin.value = value
 	spin.tooltip_text = tooltip
 	box.add_child(spin)
@@ -916,9 +939,10 @@ func _on_drop_segment(row: Control) -> void:
 	_refresh_segments()
 
 
-## The transition is only an answer to a question a second prompt asks.
+## Transition and Continuity are both answers to a question only a second
+## prompt asks.
 func _refresh_segments() -> void:
-	_transition.get_parent().visible = _segments.get_child_count() > 0
+	_transition_row.visible = _segments.get_child_count() > 0
 
 
 func _write_text(path: String, text: String) -> bool:
@@ -1018,6 +1042,10 @@ func _recipe(prompts: PackedStringArray, lengths: PackedInt32Array, transition: 
 		"transition": transition if prompts.size() > 1 else 0,
 		"steps": int(_steps.value),
 		"seed": int(_seed.value),
+		"text_cfg": _text_cfg.value,
+		# Recorded whatever the shape of the run: a recipe says what the
+		# generator was given, not what it turned out to have a use for.
+		"constraint_cfg": _constraint_cfg.value,
 		"skeleton": key,
 		"motion_repo": Settings.motion_repo(key),
 		"text_repo": String(Settings.get_value("weights/text_repo")),

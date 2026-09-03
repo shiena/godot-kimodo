@@ -78,6 +78,8 @@ const DEFAULTS := {
 	"generation/frames": 120,
 	"generation/steps": 150,
 	"generation/transition": 15,
+	"generation/text_cfg": 2.0,
+	"generation/constraint_cfg": 2.0,
 	"runtime/backend": "auto",
 	"runtime/cpu_threads": 0,
 	"runtime/text_layer_chunk": 8,
@@ -101,6 +103,8 @@ const HINTS := {
 	"generation/frames": {"hint": PROPERTY_HINT_RANGE, "hint_string": "16,600,1"},
 	"generation/steps": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,200,1"},
 	"generation/transition": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,60,1"},
+	"generation/text_cfg": {"hint": PROPERTY_HINT_RANGE, "hint_string": "0,15,0.1"},
+	"generation/constraint_cfg": {"hint": PROPERTY_HINT_RANGE, "hint_string": "0,15,0.1"},
 	"runtime/backend": {"hint": PROPERTY_HINT_ENUM, "hint_string": "auto,cpu"},
 	"runtime/cpu_threads": {"hint": PROPERTY_HINT_RANGE, "hint_string": "0,256,1"},
 	"runtime/text_layer_chunk": {"hint": PROPERTY_HINT_RANGE, "hint_string": "1,32,1"},
@@ -261,6 +265,16 @@ static func runtime_environment() -> Dictionary:
 	out["KIMODO_BACKEND"] = "cpu" if String(get_value("runtime/backend")) == "cpu" else ""
 	var threads := int(get_value("runtime/cpu_threads"))
 	out["KIMODO_THREADS"] = str(threads) if threads > 0 else ""
+
+	# The two guidance weights, which kmd-generate reads rather than the
+	# library behind it. They go through the environment because the generator
+	# tells its two command lines apart by what sits at each position, and
+	# because they are the same kind of knob as the three above.
+	out["KIMODO_TEXT_CFG"] = str(float(get_value("generation/text_cfg")))
+	# Only a sequence has anything for this one to pull against. A single
+	# prompt is sampled unconstrained, where the constraint branch of the
+	# separated CFG is handed the same input as the unconditional one.
+	out["KIMODO_CONSTRAINT_CFG"] = str(float(get_value("generation/constraint_cfg")))
 
 	# These two are ggml's rather than kimodo's, but the same process reads them.
 	# kimodo.cpp calls ggml_backend_vk_init(0), so choosing a GPU on a machine
