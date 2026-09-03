@@ -15,7 +15,9 @@ func _enter_tree() -> void:
 	# Editor Settings whether or not anyone opens the panel.
 	Settings.register()
 
-	_dock = KimodoDock.new()
+	# The manager is handed over rather than looked up: get_undo_redo() is an
+	# EditorPlugin method, and the dock is the half of this that edits scenes.
+	_dock = KimodoDock.new(get_undo_redo())
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, _dock)
 	# Selection changes reach the dock on their own. Opening another scene does
 	# not, and it can take the target skeleton with it.

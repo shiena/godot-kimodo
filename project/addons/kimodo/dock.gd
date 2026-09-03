@@ -42,6 +42,12 @@ const Checkpoint := preload("res://addons/kimodo/checkpoint.gd")
 const MOTION_UNPUBLISHED := ("The motion GGUF is no longer published: its upstream licence forbids "
 		+ "distributing a converted model. Convert it with kimodo.cpp and put it at %s.")
 
+## The editor's undo history. Only an EditorPlugin can reach one, and a dock is
+## not a plugin, so it arrives as an argument rather than being looked up. It is
+## required rather than optional: baking is the one thing here that edits the
+## open scene, and a bake that cannot be undone is worse than no bake at all.
+var _undo_redo: EditorUndoRedoManager
+
 var _body: VBoxContainer
 
 var _setup_toggle: Button
@@ -122,7 +128,8 @@ var _confirm: ConfirmationDialog
 var _downloader: Node
 
 
-func _init() -> void:
+func _init(p_undo_redo: EditorUndoRedoManager) -> void:
+	_undo_redo = p_undo_redo
 	name = "Kimodo"
 	# Vertical scrolling keeps a long status message from stretching the dock;
 	# horizontal scrolling stays off so the children wrap instead of sliding
@@ -1377,6 +1384,12 @@ func _clip_stem() -> String:
 	return name
 
 
+## The library baking writes into. A name of its own, so a scene can hold
+## hand-authored animations beside generated ones and re-baking replaces only
+## what this dock put there.
+const LIBRARY_NAME := &"kimodo"
+
+
 func _on_apply() -> void:
 	# Checked before baking: a name the library will refuse makes the work
 	# pointless, and the refusal used to arrive as a console error under a
@@ -1393,27 +1406,48 @@ func _on_apply() -> void:
 		_set_message(_save_label, "Open a scene to bake into.")
 		return
 
-	var player := _find_player(root)
-	if player == null:
-		player = AnimationPlayer.new()
-		player.name = "KimodoPlayer"
-		root.add_child(player)
-		player.owner = root
-
-	var library_name := StringName("kimodo")
-	if player.has_animation_library(library_name):
-		# Only when it is playing out of the library about to go, so baking
-		# does not stop a player that was showing something else.
-		if player.assigned_animation.begins_with("%s/" % library_name):
-			player.stop()
-		player.remove_animation_library(library_name)
 	var library := AnimationLibrary.new()
 	library.add_animation(StringName(name), animation)
-	player.add_animation_library(library_name, library)
+
+	var player := _find_player(root)
+	var fresh_player := player == null
+	if fresh_player:
+		player = AnimationPlayer.new()
+		player.name = "KimodoPlayer"
+
+	var previous: AnimationLibrary = null
+	if not fresh_player and player.has_animation_library(LIBRARY_NAME):
+		previous = player.get_animation_library(LIBRARY_NAME)
+		# Only when it is playing out of the library about to go, so baking does
+		# not stop a player that was showing something else. Where the playhead
+		# sits is not scene data, so it is not part of the action either.
+		if player.assigned_animation.begins_with("%s/" % LIBRARY_NAME):
+			player.stop()
+
+	# Both lists run in the order they are registered, so each one reads
+	# forwards: the undo builds the old state back up the way the do built the
+	# new one, rather than mirroring it.
+	_undo_redo.create_action("Bake Kimodo animation", UndoRedo.MERGE_DISABLE, root)
+	if fresh_player:
+		_undo_redo.add_do_method(root, &"add_child", player)
+		_undo_redo.add_do_method(player, &"set_owner", root)
+		_undo_redo.add_do_reference(player)
+	if previous != null:
+		_undo_redo.add_do_method(player, &"remove_animation_library", LIBRARY_NAME)
+	_undo_redo.add_do_method(player, &"add_animation_library", LIBRARY_NAME, library)
+	_undo_redo.add_do_reference(library)
+
+	_undo_redo.add_undo_method(player, &"remove_animation_library", LIBRARY_NAME)
+	if previous != null:
+		_undo_redo.add_undo_method(player, &"add_animation_library", LIBRARY_NAME, previous)
+		_undo_redo.add_undo_reference(previous)
+	if fresh_player:
+		_undo_redo.add_undo_method(root, &"remove_child", player)
+	_undo_redo.commit_action()
 
 	EditorInterface.get_selection().clear()
 	EditorInterface.get_selection().add_node(player)
-	_set_message(_save_label, "Baked into %s as kimodo/%s." % [player.name, name])
+	_set_message(_save_label, "Baked into %s as %s/%s." % [player.name, LIBRARY_NAME, name])
 	_refresh_target()
 
 
